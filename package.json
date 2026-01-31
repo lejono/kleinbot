@@ -1,0 +1,23 @@
+{
+  "name": "kleinbot",
+  "version": "0.1.0",
+  "author": "Jonathan Oppenheim",
+  "license": "AGPL-3.0-or-later",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "npx tsx src/index.ts",
+    "setup": "bash scripts/setup.sh"
+  },
+  "dependencies": {
+    "baileys": "^6.7.16",
+    "dotenv": "^16.4.7",
+    "pino": "^9.6.0",
+    "qrcode-terminal": "^0.12.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

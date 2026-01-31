@@ -1,0 +1,11 @@
+node_modules/
+dist/
+data/auth/
+data/state.json
+data/notes/
+.env
+prompts/chats.json
+data/pending.json
+data/cron.log
+data/.kleinbot.lock
+.claude/

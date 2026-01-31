@@ -1,0 +1,13 @@
+{
+  "default": {
+    "prompt": "prompts/default.md",
+    "model": "opus",
+    "verbosity": 3
+  },
+  "120363000000000000@g.us": {
+    "prompt": "prompts/default.md",
+    "model": "sonnet",
+    "description": "AI Club discussion group",
+    "verbosity": 4
+  }
+}
