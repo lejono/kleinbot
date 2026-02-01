@@ -19,6 +19,10 @@ const pendingIds = new Set<string>();
 // Cache Claude decisions when sends fail, so we retry just the send (not the whole Claude call)
 const cachedDecisions = new Map<string, ClaudeResponse>();
 
+// Track retry failures per chat — drop messages after MAX_RETRIES to prevent infinite loops
+const MAX_RETRIES = 3;
+const retryCounts = new Map<string, number>();
+
 function rebuildPendingIds(): void {
   pendingIds.clear();
   for (const queue of pendingByChat.values()) {
@@ -145,6 +149,15 @@ function onOutgoingDm(dmJid: string) {
 }
 
 async function processPending() {
+  // Send any queued Moltbook cross-pollination digests (independent of pending messages)
+  if (config.moltbookApiKey && isConnected()) {
+    try {
+      await sendCrossPollination(getCurrentSocket()!);
+    } catch (err: any) {
+      console.error("[moltbook] Cross-pollination failed:", err.message);
+    }
+  }
+
   if (pendingByChat.size === 0) return;
 
   if (!isConnected()) {
@@ -244,29 +257,36 @@ async function processPending() {
         pendingIds.delete(msg.id);
       }
       cachedDecisions.delete(chatJid);
+      retryCounts.delete(chatJid);
       saveState(state);
     } catch (err) {
-      console.error(`Error processing messages for ${chatJid}:`, err);
-      // Cache the Claude decision so we retry just the send, not the whole Claude call
-      if (decision) {
-        cachedDecisions.set(chatJid, decision);
+      const retries = (retryCounts.get(chatJid) || 0) + 1;
+      retryCounts.set(chatJid, retries);
+
+      if (retries >= MAX_RETRIES) {
+        console.error(`Dropping ${normalMessages.length} message(s) for ${chatJid} after ${retries} failures:`, err);
+        // Mark as processed so they don't come back
+        for (const msg of normalMessages) {
+          markProcessed(state, msg);
+          pendingIds.delete(msg.id);
+        }
+        retryCounts.delete(chatJid);
+        cachedDecisions.delete(chatJid);
+        saveState(state);
+      } else {
+        console.error(`Error processing messages for ${chatJid} (retry ${retries}/${MAX_RETRIES}):`, err);
+        // Cache the Claude decision so we retry just the send, not the whole Claude call
+        if (decision) {
+          cachedDecisions.set(chatJid, decision);
+        }
+        // Put messages back so they're retried next cycle
+        const existing = pendingByChat.get(chatJid) || [];
+        pendingByChat.set(chatJid, [...normalMessages, ...existing]);
       }
-      // Put messages back so they're retried next cycle
-      const existing = pendingByChat.get(chatJid) || [];
-      pendingByChat.set(chatJid, [...normalMessages, ...existing]);
     }
   }
 
   savePending(pendingByChat);
-
-  // Send any queued Moltbook cross-pollination digests
-  if (config.moltbookApiKey && isConnected()) {
-    try {
-      await sendCrossPollination(getCurrentSocket()!);
-    } catch (err: any) {
-      console.error("[moltbook] Cross-pollination failed:", err.message);
-    }
-  }
 }
 
 async function main() {

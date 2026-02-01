@@ -185,7 +185,7 @@ export async function askClaude(
       "--allowedTools", "WebSearch,WebFetch",
     ], {
       stdio: ["pipe", "pipe", "pipe"],
-      timeout: 90_000,
+      timeout: 180_000,
     });
 
     let stdout = "";
