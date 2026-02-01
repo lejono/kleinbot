@@ -2,8 +2,10 @@ import { spawn } from "child_process";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import type { WASocket } from "baileys";
 import type { ChatMessage, ClaudeResponse, ChatConfig, ChatsConfig } from "./types.js";
 import { config } from "./config.js";
+import { fetchGroupDescription } from "./whatsapp.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..");
@@ -36,6 +38,45 @@ export function getChatConfig(chatJid: string): ChatConfig {
   const raw = fs.readFileSync(config.chatsConfigFile, "utf-8");
   const chats: ChatsConfig = JSON.parse(raw);
   return chats[chatJid] || chats["default"];
+}
+
+/**
+ * If chatJid doesn't have an entry in chats.json, create one from defaults.
+ * For groups, fetches the WhatsApp group description automatically.
+ * Returns true if a new entry was created.
+ */
+export async function ensureChatConfig(chatJid: string, sock?: WASocket): Promise<boolean> {
+  const raw = fs.readFileSync(config.chatsConfigFile, "utf-8");
+  const chats: ChatsConfig = JSON.parse(raw);
+  if (chats[chatJid]) return false;
+
+  const defaults = chats["default"];
+  let description = "";
+
+  // Fetch group description from WhatsApp if it's a group
+  if (sock && chatJid.endsWith("@g.us")) {
+    const meta = await fetchGroupDescription(sock, chatJid);
+    if (meta) {
+      const parts: string[] = [];
+      if (meta.subject) parts.push(`Group: ${meta.subject}`);
+      if (meta.description) parts.push(meta.description);
+      description = parts.join("\n");
+    }
+  }
+
+  chats[chatJid] = {
+    prompt: defaults.prompt,
+    model: defaults.model,
+    verbosity: defaults.verbosity ?? 3,
+    description,
+  };
+  fs.writeFileSync(config.chatsConfigFile, JSON.stringify(chats, null, 2) + "\n");
+  console.log(`\n========================================`);
+  console.log(`NEW CHAT ADDED TO CONFIG: ${chatJid}`);
+  if (description) console.log(`Description: ${description.slice(0, 200)}`);
+  console.log(`Edit prompts/chats.json to customize.`);
+  console.log(`========================================\n`);
+  return true;
 }
 
 export function getNotesPath(chatJid: string): string {

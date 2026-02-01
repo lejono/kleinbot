@@ -133,6 +133,22 @@ export function extractMessages(
   return results.sort((a, b) => a.timestamp - b.timestamp);
 }
 
+export async function fetchGroupDescription(
+  sock: WASocket,
+  jid: string
+): Promise<{ subject: string; description: string } | null> {
+  try {
+    const meta = await sock.groupMetadata(jid);
+    return {
+      subject: meta.subject || "",
+      description: meta.desc || "",
+    };
+  } catch (err) {
+    console.error(`Failed to fetch group metadata for ${jid}:`, err);
+    return null;
+  }
+}
+
 export async function sendTextMessage(
   sock: WASocket,
   jid: string,

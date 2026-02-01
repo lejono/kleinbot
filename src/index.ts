@@ -1,7 +1,7 @@
 import { config } from "./config.js";
 import { startConnection, sendTextMessage, sendPollMessage } from "./whatsapp.js";
 import { loadState, saveState, isProcessed, markProcessed, isDmAllowed, allowDm } from "./state.js";
-import { askClaude, getChatConfig, saveNotes, readNotes } from "./ai.js";
+import { askClaude, getChatConfig, ensureChatConfig, saveNotes, readNotes } from "./ai.js";
 import { loadPending, savePending } from "./pending.js";
 import type { WASocket } from "baileys";
 import type { ChatMessage } from "./types.js";
@@ -168,6 +168,9 @@ async function processPending() {
 
     console.log(`Processing ${normalMessages.length} message(s) from ${chatJid}...`);
 
+    // Auto-create config entry for unknown chats
+    await ensureChatConfig(chatJid, sock);
+
     try {
       const chatConfig = getChatConfig(chatJid);
       // Filter history to this chat for context
@@ -175,12 +178,6 @@ async function processPending() {
         .filter((m) => m.chatJid === chatJid)
         .slice(-config.historyWindow);
       const decision = await askClaude(recentHistory, normalMessages, chatConfig, chatJid);
-
-      // Mark messages as processed only after Claude succeeds
-      for (const msg of normalMessages) {
-        markProcessed(state, msg);
-        pendingIds.delete(msg.id);
-      }
 
       // Save bot notes if provided
       if (decision.notes) {
@@ -207,6 +204,13 @@ async function processPending() {
       if (decision.poll) {
         console.log(`Sending poll to ${chatJid}: ${decision.poll.question}`);
         await sendPollMessage(sock, chatJid, decision.poll);
+      }
+
+      // Mark messages as processed only after everything succeeds (Claude + send)
+      // This prevents duplicates in history when sends fail and messages are retried
+      for (const msg of normalMessages) {
+        markProcessed(state, msg);
+        pendingIds.delete(msg.id);
       }
       saveState(state);
     } catch (err) {
