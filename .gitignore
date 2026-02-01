@@ -8,4 +8,5 @@ prompts/chats.json
 data/pending.json
 data/cron.log
 data/.kleinbot.lock
+data/moltbook-state.json
 .claude/

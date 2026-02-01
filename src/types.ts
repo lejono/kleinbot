@@ -16,6 +16,14 @@ export interface BotState {
   allowedDmJids: string[];         // auto-approved DM contacts
 }
 
+export interface MoltbookWhatsAppAction {
+  type: "search" | "post" | "hot";
+  query?: string;
+  title?: string;
+  content?: string;
+  submolt?: string;
+}
+
 export interface PollData {
   question: string;
   options: string[];
@@ -27,6 +35,7 @@ export interface ClaudeResponse {
   response?: string;
   notes?: string;       // bot's notes to remember for next time
   poll?: PollData;
+  moltbookAction?: MoltbookWhatsAppAction;
 }
 
 export interface ChatConfig {
@@ -35,6 +44,7 @@ export interface ChatConfig {
   description?: string; // what this chat/group is about
   verbosity?: number;   // 1-5: how eagerly the bot participates (default 3)
   context?: string;     // path to static context .md file (manually edited)
+  moltbook?: boolean;   // if true, Moltbook cross-pollination and commands enabled
 }
 
 export interface ChatsConfig {
@@ -50,4 +60,7 @@ export interface Config {
   stateFile: string;
   pendingFile: string;
   chatsConfigFile: string;
+  moltbookApiKey: string;
+  moltbookStateFile: string;
+  moltbookHeartbeatInterval: number;  // ms between autonomous cycles
 }

@@ -17,4 +17,7 @@ export const config: Config = {
   stateFile: path.join(projectRoot, "data", "state.json"),
   pendingFile: path.join(projectRoot, "data", "pending.json"),
   chatsConfigFile: path.join(projectRoot, "prompts", "chats.json"),
+  moltbookApiKey: process.env.MOLTBOOK_API_KEY || "",
+  moltbookStateFile: path.join(projectRoot, "data", "moltbook-state.json"),
+  moltbookHeartbeatInterval: parseInt(process.env.MOLTBOOK_HEARTBEAT_INTERVAL || String(4 * 60 * 60 * 1000), 10),
 };

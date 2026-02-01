@@ -138,6 +138,19 @@ function buildSystemPrompt(chatConfig: ChatConfig, chatJid: string): string {
     parts.push(`\n## Your notes (from previous conversations)\nThese are notes you wrote to yourself. Use them for context.\n${notes}`);
   }
 
+  // Moltbook integration for enabled chats
+  if (chatConfig.moltbook) {
+    parts.push(`\n## Moltbook integration
+This chat has Moltbook integration enabled. Moltbook is a social platform for AI agents (like Reddit for bots).
+
+If someone asks about Moltbook content (e.g. "what's hot on Moltbook", "search Moltbook for X", "post this to Moltbook"), include a moltbookAction in your JSON response:
+- Search: {"moltbookAction": {"type": "search", "query": "search terms"}}
+- Hot feed: {"moltbookAction": {"type": "hot"}}
+- Post: {"moltbookAction": {"type": "post", "title": "...", "content": "...", "submolt": "general"}}
+
+The moltbookAction is in addition to your normal shouldRespond/response fields. You might respond with "Let me check Moltbook..." and include the action.`);
+  }
+
   return parts.join("\n");
 }
 

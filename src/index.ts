@@ -4,6 +4,8 @@ import { loadState, saveState, isProcessed, markProcessed, isDmAllowed, allowDm 
 import { askClaude, getChatConfig, ensureChatConfig, saveNotes, readNotes } from "./ai.js";
 import { loadPending, savePending } from "./pending.js";
 import type { ChatMessage, ClaudeResponse } from "./types.js";
+import { runMoltbookCycle } from "./moltbook/cycle.js";
+import { handleMoltbookAction, sendCrossPollination } from "./moltbook/whatsapp-bridge.js";
 
 // How often to check accumulated messages and maybe respond (ms)
 const PROCESS_INTERVAL = parseInt(process.env.PROCESS_INTERVAL || "60000", 10);
@@ -222,6 +224,19 @@ async function processPending() {
         await sendPollMessage(sock, chatJid, decision.poll);
       }
 
+      // Handle Moltbook actions triggered from WhatsApp
+      if (decision.moltbookAction) {
+        console.log(`[moltbook] WhatsApp action: ${decision.moltbookAction.type}`);
+        try {
+          const moltbookResult = await handleMoltbookAction(decision.moltbookAction);
+          if (moltbookResult) {
+            await sendTextMessage(sock, chatJid, moltbookResult);
+          }
+        } catch (err: any) {
+          console.error(`[moltbook] Action failed:`, err.message);
+        }
+      }
+
       // Mark messages as processed only after everything succeeds (Claude + send)
       // This prevents duplicates in history when sends fail and messages are retried
       for (const msg of normalMessages) {
@@ -243,6 +258,15 @@ async function processPending() {
   }
 
   savePending(pendingByChat);
+
+  // Send any queued Moltbook cross-pollination digests
+  if (config.moltbookApiKey && isConnected()) {
+    try {
+      await sendCrossPollination(getCurrentSocket()!);
+    } catch (err: any) {
+      console.error("[moltbook] Cross-pollination failed:", err.message);
+    }
+  }
 }
 
 async function main() {
@@ -255,10 +279,32 @@ async function main() {
   console.log(`Approved DMs: ${state.allowedDmJids.length}`);
   console.log(`Pending messages restored: ${pendingIds.size}`);
 
+  if (config.moltbookApiKey) {
+    console.log(`Moltbook enabled — heartbeat every ${Math.round(config.moltbookHeartbeatInterval / 3600000)}h`);
+  } else {
+    console.log("Moltbook disabled (no MOLTBOOK_API_KEY)");
+  }
+
   await startConnection(onNewMessages, onOutgoingDm);
 
   // Periodically process accumulated messages
   setInterval(processPending, PROCESS_INTERVAL);
+
+  // Moltbook autonomous participation heartbeat
+  if (config.moltbookApiKey) {
+    // Run first cycle after a short delay (let WhatsApp connect first)
+    setTimeout(() => {
+      runMoltbookCycle().catch((err) =>
+        console.error("[moltbook] Cycle error:", err),
+      );
+    }, 30_000);
+
+    setInterval(() => {
+      runMoltbookCycle().catch((err) =>
+        console.error("[moltbook] Cycle error:", err),
+      );
+    }, config.moltbookHeartbeatInterval);
+  }
 
   // Keep process alive
   process.on("SIGINT", () => {
