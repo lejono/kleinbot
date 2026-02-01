@@ -6,5 +6,6 @@
 
 ## Bugs / Improvements
 
-- **Cache Claude response on send failure** — When `sendTextMessage` fails and messages are re-queued, the next cycle calls Claude again from scratch, wasting an API call to regenerate a response that was already good. Should cache the decision and retry just the send.
-- **Check connection health before processing** — The bot processes pending messages on a timer regardless of whether the WhatsApp socket is connected. Should skip processing (or delay) when the connection is down to avoid repeated fail/retry loops.
+- ~~**Cache Claude response on send failure** — fixed: cached decisions are reused on retry~~
+- ~~**Check connection health before processing** — fixed: skips processing when disconnected~~
+- ~~**Stale socket after reconnect** — fixed: `getCurrentSocket()` always returns the active socket~~

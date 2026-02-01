@@ -1,20 +1,21 @@
 import { config } from "./config.js";
-import { startConnection, sendTextMessage, sendPollMessage } from "./whatsapp.js";
+import { startConnection, sendTextMessage, sendPollMessage, isConnected, getCurrentSocket } from "./whatsapp.js";
 import { loadState, saveState, isProcessed, markProcessed, isDmAllowed, allowDm } from "./state.js";
 import { askClaude, getChatConfig, ensureChatConfig, saveNotes, readNotes } from "./ai.js";
 import { loadPending, savePending } from "./pending.js";
-import type { WASocket } from "baileys";
-import type { ChatMessage } from "./types.js";
+import type { ChatMessage, ClaudeResponse } from "./types.js";
 
 // How often to check accumulated messages and maybe respond (ms)
 const PROCESS_INTERVAL = parseInt(process.env.PROCESS_INTERVAL || "60000", 10);
 
 const state = loadState();
 const pendingByChat = loadPending();
-let sock: WASocket;
 
 // Track IDs currently in pending queues to avoid duplicates from repeated events
 const pendingIds = new Set<string>();
+
+// Cache Claude decisions when sends fail, so we retry just the send (not the whole Claude call)
+const cachedDecisions = new Map<string, ClaudeResponse>();
 
 function rebuildPendingIds(): void {
   pendingIds.clear();
@@ -65,13 +66,13 @@ async function handleAdminCommand(msg: ChatMessage): Promise<void> {
         `Approved DMs: ${dmCount}`,
       ];
       if (chatConfig.description) lines.push(`Description: ${chatConfig.description}`);
-      await sendTextMessage(sock, chatJid, lines.join("\n"));
+      await sendTextMessage(getCurrentSocket()!, chatJid, lines.join("\n"));
       break;
     }
 
     case "/notes": {
       const notes = readNotes(chatJid);
-      await sendTextMessage(sock, chatJid, notes || "(no notes)");
+      await sendTextMessage(getCurrentSocket()!, chatJid, notes || "(no notes)");
       break;
     }
 
@@ -80,9 +81,9 @@ async function handleAdminCommand(msg: ChatMessage): Promise<void> {
       const jid = args[0]?.includes("@") ? args[0] : `${args[0]}@s.whatsapp.net`;
       if (allowDm(state, jid)) {
         saveState(state);
-        await sendTextMessage(sock, chatJid, `Approved DM: ${jid}`);
+        await sendTextMessage(getCurrentSocket()!, chatJid, `Approved DM: ${jid}`);
       } else {
-        await sendTextMessage(sock, chatJid, `Already approved: ${jid}`);
+        await sendTextMessage(getCurrentSocket()!, chatJid, `Already approved: ${jid}`);
       }
       break;
     }
@@ -91,12 +92,12 @@ async function handleAdminCommand(msg: ChatMessage): Promise<void> {
       const list = state.allowedDmJids.length > 0
         ? state.allowedDmJids.join("\n")
         : "(none)";
-      await sendTextMessage(sock, chatJid, `Approved DMs:\n${list}`);
+      await sendTextMessage(getCurrentSocket()!, chatJid, `Approved DMs:\n${list}`);
       break;
     }
 
     case "/help": {
-      await sendTextMessage(sock, chatJid, [
+      await sendTextMessage(getCurrentSocket()!, chatJid, [
         "/status — bot status for this chat",
         "/notes — show bot's notes for this chat",
         "/allow <number> — approve a DM contact",
@@ -107,7 +108,7 @@ async function handleAdminCommand(msg: ChatMessage): Promise<void> {
     }
 
     default:
-      await sendTextMessage(sock, chatJid, `Unknown command: ${cmd}. Try /help`);
+      await sendTextMessage(getCurrentSocket()!, chatJid, `Unknown command: ${cmd}. Try /help`);
   }
 }
 
@@ -144,6 +145,13 @@ function onOutgoingDm(dmJid: string) {
 async function processPending() {
   if (pendingByChat.size === 0) return;
 
+  if (!isConnected()) {
+    console.log("Skipping processing — not connected to WhatsApp");
+    return;
+  }
+
+  const sock = getCurrentSocket()!;
+
   // Snapshot and clear the queues so new messages don't interfere
   const chatBatches = new Map(pendingByChat);
   pendingByChat.clear();
@@ -171,13 +179,21 @@ async function processPending() {
     // Auto-create config entry for unknown chats
     await ensureChatConfig(chatJid, sock);
 
+    let decision: ClaudeResponse | undefined;
     try {
-      const chatConfig = getChatConfig(chatJid);
-      // Filter history to this chat for context
-      const recentHistory = state.messageHistory
-        .filter((m) => m.chatJid === chatJid)
-        .slice(-config.historyWindow);
-      const decision = await askClaude(recentHistory, normalMessages, chatConfig, chatJid);
+      // Use cached decision if available (Claude succeeded but send failed last time)
+      decision = cachedDecisions.get(chatJid);
+      if (decision) {
+        console.log(`Retrying cached response for ${chatJid}`);
+        cachedDecisions.delete(chatJid);
+      } else {
+        const chatConfig = getChatConfig(chatJid);
+        // Filter history to this chat for context
+        const recentHistory = state.messageHistory
+          .filter((m) => m.chatJid === chatJid)
+          .slice(-config.historyWindow);
+        decision = await askClaude(recentHistory, normalMessages, chatConfig, chatJid);
+      }
 
       // Save bot notes if provided
       if (decision.notes) {
@@ -212,9 +228,14 @@ async function processPending() {
         markProcessed(state, msg);
         pendingIds.delete(msg.id);
       }
+      cachedDecisions.delete(chatJid);
       saveState(state);
     } catch (err) {
       console.error(`Error processing messages for ${chatJid}:`, err);
+      // Cache the Claude decision so we retry just the send, not the whole Claude call
+      if (decision) {
+        cachedDecisions.set(chatJid, decision);
+      }
       // Put messages back so they're retried next cycle
       const existing = pendingByChat.get(chatJid) || [];
       pendingByChat.set(chatJid, [...normalMessages, ...existing]);
@@ -234,7 +255,7 @@ async function main() {
   console.log(`Approved DMs: ${state.allowedDmJids.length}`);
   console.log(`Pending messages restored: ${pendingIds.size}`);
 
-  sock = await startConnection(onNewMessages, onOutgoingDm);
+  await startConnection(onNewMessages, onOutgoingDm);
 
   // Periodically process accumulated messages
   setInterval(processPending, PROCESS_INTERVAL);
@@ -244,7 +265,7 @@ async function main() {
     console.log("\nShutting down...");
     saveState(state);
     savePending(pendingByChat);
-    sock.end(undefined);
+    getCurrentSocket()?.end(undefined);
     process.exit(0);
   });
 
@@ -252,7 +273,7 @@ async function main() {
     console.log("Received SIGTERM, shutting down...");
     saveState(state);
     savePending(pendingByChat);
-    sock.end(undefined);
+    getCurrentSocket()?.end(undefined);
     process.exit(0);
   });
 }

@@ -13,6 +13,18 @@ import type { ChatMessage, PollData } from "./types.js";
 
 const logger = pino({ level: process.env.LOG_LEVEL || "warn" });
 
+// Module-level connection state — updated on connect/disconnect
+let currentSock: WASocket | null = null;
+let connected = false;
+
+export function isConnected(): boolean {
+  return connected && currentSock !== null;
+}
+
+export function getCurrentSocket(): WASocket | null {
+  return currentSock;
+}
+
 export type MessageHandler = (messages: ChatMessage[]) => void;
 export type OutgoingDmHandler = (dmJid: string) => void;
 
@@ -37,6 +49,8 @@ export async function startConnection(
       markOnlineOnConnect: false,
     });
 
+    currentSock = sock;
+
     sock.ev.on("creds.update", saveCreds);
 
     sock.ev.on("connection.update", async (update) => {
@@ -49,8 +63,10 @@ export async function startConnection(
       }
 
       if (connection === "open") {
+        connected = true;
         console.log("Connected to WhatsApp");
       } else if (connection === "close") {
+        connected = false;
         const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
         if (statusCode === DisconnectReason.loggedOut) {
           console.error("Logged out — delete data/auth/ and re-pair");
