@@ -16,17 +16,19 @@ index.ts → startConnection(Baileys) → stays connected, receives messages in 
                                             ↓
               send queued Moltbook cross-pollination digests to moltbook-enabled chats
 
-index.ts → setInterval(runMoltbookCycle) → every 4 hours (if MOLTBOOK_API_KEY set):
-              fetch hot feed → filter unseen → claude --print with moltbook prompt
+index.ts → checkMorningBriefing() → every process tick, if past 05:30 UK and not run today:
+              runMorningBriefing() → claude --print (opus + WebSearch/WebFetch)
+              reads Moltbook feed (non-fatal) + web searches for AI news
                                             ↓
-              execute actions (upvote/comment/post) → queue cross-pollination items
+              sends conversational briefing to moltbook-enabled WhatsApp chats
+              appends journal entry to data/moltbook-journal.md
 ```
 
 Baileys as a linked/companion device does NOT receive offline messages — it only gets messages while the socket is connected. This is why a persistent daemon is required instead of cron-based connect/disconnect.
 
 ## File Structure
 
-- `src/index.ts` — Daemon: connect, collect messages in real-time, per-chat queues, process on interval, respond. Also starts Moltbook heartbeat timer.
+- `src/index.ts` — Daemon: connect, collect messages in real-time, per-chat queues, process on interval, respond. Also runs morning briefing check each tick.
 - `src/config.ts` — Loads `.env`, builds config object
 - `src/whatsapp.ts` — Baileys persistent connection: `startConnection()` with auto-reconnect, `extractMessages()`, `sendTextMessage()`
 - `src/ai.ts` — Spawns `claude --print` with per-chat model/prompt + WebSearch/WebFetch tools, parses JSON `{shouldRespond, response}`. Also exports `getChatConfig()` for prompt lookup. Adds Moltbook instructions to system prompt for moltbook-enabled chats.
@@ -34,18 +36,20 @@ Baileys as a linked/companion device does NOT receive offline messages — it on
 - `src/types.ts` — Shared TypeScript interfaces (`ChatMessage`, `ChatConfig`, `ChatsConfig`, etc.)
 - `src/qrcode-terminal.d.ts` — Type declaration for qrcode-terminal
 - `src/moltbook/client.ts` — HTTP wrapper for Moltbook API (feed, posts, comments, voting, search). Uses Node's built-in `fetch`.
-- `src/moltbook/cycle.ts` — Autonomous participation: fetch feed → Claude picks actions → execute (two-phase commenting). Called on a timer from index.ts.
+- `src/moltbook/cycle.ts` — Autonomous participation: fetch feed → Claude picks actions → execute (two-phase commenting). Also `runMorningBriefing()` for daily AI news digest.
 - `src/moltbook/state.ts` — Moltbook state: seen posts, rate limit tracking, cross-pollination queue
 - `src/moltbook/types.ts` — Moltbook-specific interfaces
 - `src/moltbook/whatsapp-bridge.ts` — Handles WhatsApp-triggered Moltbook commands; sends cross-pollination digests to moltbook-enabled chats
 - `prompts/chats.json` — Per-chat config: maps JIDs to prompt files and model names
 - `prompts/default.md` — Default bot personality and decision rules
 - `prompts/moltbook.md` — System prompt for autonomous Moltbook participation (with prompt injection defense)
+- `prompts/briefing.md` — System prompt for daily morning briefing (Moltbook + web search)
 - `scripts/setup.sh` — npm install + directory setup
 - `scripts/cron-run.sh` — Simple runner script (for systemd or manual use)
 - `scripts/moltbook-register.ts` — One-time Moltbook registration (prints API key + claim URL)
 - `data/notes/` — Bot's self-written notes per chat (persistent memory)
-- `data/moltbook-state.json` — Seen posts, rate limits, cross-pollination queue (gitignored)
+- `data/moltbook-state.json` — Seen posts, rate limits, cross-pollination queue, lastRunDate (gitignored)
+- `data/moltbook-journal.md` — Rolling journal for briefing continuity (~8000 chars, ~40 days)
 - `docs/security-audit-*.md` — Security audit reports
 
 ## Config (.env)
@@ -54,8 +58,7 @@ Baileys as a linked/companion device does NOT receive offline messages — it on
 - `PROCESS_INTERVAL` — How often to process accumulated messages, in ms (default: 60000)
 - `HISTORY_WINDOW` — Rolling message context size (default: 50)
 - `LOG_LEVEL` — Pino log level for Baileys (default: "warn", use "debug" for troubleshooting)
-- `MOLTBOOK_API_KEY` — Moltbook API key (get from `npx tsx scripts/moltbook-register.ts`). If unset, Moltbook features are disabled.
-- `MOLTBOOK_HEARTBEAT_INTERVAL` — How often to browse Moltbook autonomously, in ms (default: 14400000 = 4 hours)
+- `MOLTBOOK_API_KEY` — Moltbook API key (get from `npx tsx scripts/moltbook-register.ts`). If unset, Moltbook features are disabled. Morning briefing runs daily at 05:30 UK time.
 
 ## Per-chat Configuration (prompts/chats.json)
 

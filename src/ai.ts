@@ -26,8 +26,8 @@ function formatTranscript(messages: ChatMessage[]): string {
 const VERBOSITY_INSTRUCTIONS: Record<number, string> = {
   1: "Almost never respond. Only respond when directly @mentioned by name. Ignore everything else.",
   2: "Rarely respond. Only respond to direct questions aimed at you or @mentions. Stay quiet during general conversation.",
-  3: "Respond moderately. Jump in when someone asks a question you can help with, when you're mentioned, or when the conversation would benefit from facilitation. Stay quiet during casual banter.",
-  4: "Be fairly chatty. Respond to most questions, offer opinions, react to interesting topics, and join the banter. Still skip messages that don't need a response.",
+  3: "Respond selectively. Look at how often other people in the chat are posting — you should post LESS than the median group member. Only respond when you're mentioned, asked a direct question, or can add something genuinely useful that nobody else has said. When in doubt, stay quiet. Most messages should get no response from you.",
+  4: "Be fairly active — roughly matching the posting frequency of a typical group member. Respond to questions, offer opinions, react to interesting topics, and join the conversation. Still skip messages that don't need a response.",
   5: "Be very active. Participate freely in conversation like a regular group member. Respond to most messages, share thoughts, and be social.",
 };
 

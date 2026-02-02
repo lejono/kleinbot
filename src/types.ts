@@ -62,5 +62,4 @@ export interface Config {
   chatsConfigFile: string;
   moltbookApiKey: string;
   moltbookStateFile: string;
-  moltbookHeartbeatInterval: number;  // ms between autonomous cycles
 }

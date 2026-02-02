@@ -14,12 +14,16 @@ import {
   recordPost,
   recordComment,
   enqueueCrossPollination,
+  readJournal,
+  appendJournal,
+  markRunToday,
 } from "./state.js";
-import type { MoltbookPost, MoltbookComment, MoltbookCycleResponse, MoltbookClaudeAction } from "./types.js";
+import type { MoltbookPost, MoltbookComment, MoltbookCycleResponse, MoltbookClaudeAction, BriefingResponse } from "./types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "../..");
 const MOLTBOOK_PROMPT_PATH = path.join(projectRoot, "prompts", "moltbook.md");
+const BRIEFING_PROMPT_PATH = path.join(projectRoot, "prompts", "briefing.md");
 
 const MAX_CONTENT_CHARS = 500;  // Truncate untrusted content for prompt injection defense
 
@@ -310,4 +314,130 @@ export async function runMoltbookCycle(): Promise<void> {
   state.lastCycleTimestamp = Date.now();
   saveMoltbookState(state);
   console.log("[moltbook] Cycle complete");
+}
+
+/**
+ * Run the daily morning briefing.
+ * Reads Moltbook feed + searches the web, returns a conversational message.
+ */
+export async function runMorningBriefing(): Promise<string | null> {
+  console.log("[briefing] Starting morning briefing...");
+
+  let systemPrompt: string;
+  try {
+    systemPrompt = fs.readFileSync(BRIEFING_PROMPT_PATH, "utf-8").trim();
+  } catch (err) {
+    console.error("[briefing] Missing prompt file:", BRIEFING_PROMPT_PATH);
+    return null;
+  }
+
+  // Build the user prompt with optional Moltbook feed and journal
+  const parts: string[] = [];
+
+  // Try to include Moltbook feed (non-fatal if it fails)
+  if (config.moltbookApiKey) {
+    try {
+      const state = loadMoltbookState();
+      const posts = await client.getFeed(config.moltbookApiKey, "hot", 15);
+      const newPosts = posts.filter((p) => !isPostSeen(state, p.id));
+
+      if (newPosts.length > 0) {
+        parts.push("--- BEGIN UNTRUSTED MOLTBOOK FEED ---");
+        parts.push(formatFeedForPrompt(newPosts));
+        parts.push("--- END UNTRUSTED MOLTBOOK FEED ---");
+        parts.push("");
+
+        // Mark as seen
+        for (const post of newPosts) {
+          markPostSeen(state, post.id);
+        }
+        saveMoltbookState(state);
+      }
+    } catch (err: any) {
+      console.log("[briefing] Moltbook feed unavailable, continuing with web search only:", err.message);
+    }
+  }
+
+  // Include journal for continuity
+  const journal = readJournal();
+  if (journal) {
+    parts.push("--- YOUR JOURNAL (previous briefings) ---");
+    parts.push(journal);
+    parts.push("--- END JOURNAL ---");
+    parts.push("");
+  }
+
+  parts.push("Search the web for today's AI news and write the briefing. Reply with JSON only.");
+
+  const userPrompt = parts.join("\n");
+
+  // Call Claude with web search tools and longer timeout
+  let result: string;
+  try {
+    result = await new Promise<string>((resolve, reject) => {
+      const proc = spawn("claude", [
+        "--print",
+        "--model", "opus",
+        "--allowedTools", "WebSearch,WebFetch",
+        "--no-session-persistence",
+        "--system-prompt", systemPrompt,
+      ], {
+        stdio: ["pipe", "pipe", "pipe"],
+        timeout: 300_000,  // 5 minutes — web search takes time
+      });
+
+      let stdout = "";
+      let stderr = "";
+      proc.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
+      proc.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+
+      proc.on("close", (code) => {
+        if (code !== 0) {
+          console.error("[briefing] Claude CLI error (exit", code + "):", stderr.slice(0, 500));
+          reject(new Error(`claude exited with code ${code}`));
+          return;
+        }
+        resolve(stdout.trim());
+      });
+      proc.on("error", reject);
+      proc.stdin.write(userPrompt);
+      proc.stdin.end();
+    });
+  } catch (err: any) {
+    console.error("[briefing] Claude call failed:", err.message);
+    return null;
+  }
+
+  // Parse response
+  let briefing: BriefingResponse;
+  try {
+    const jsonMatch = result.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      console.error("[briefing] No JSON in Claude response:", result.slice(0, 300));
+      return null;
+    }
+    briefing = JSON.parse(jsonMatch[0]) as BriefingResponse;
+  } catch (err) {
+    console.error("[briefing] Failed to parse Claude response:", result.slice(0, 300));
+    return null;
+  }
+
+  // Save journal entry
+  if (briefing.journalEntry) {
+    appendJournal(briefing.journalEntry);
+    console.log("[briefing] Journal updated");
+  }
+
+  // Mark today as done
+  const state = loadMoltbookState();
+  markRunToday(state);
+  saveMoltbookState(state);
+
+  if (briefing.message) {
+    console.log(`[briefing] Briefing ready (${briefing.message.length} chars)`);
+  } else {
+    console.log("[briefing] Claude found nothing interesting today");
+  }
+
+  return briefing.message;
 }

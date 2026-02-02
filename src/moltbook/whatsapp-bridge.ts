@@ -115,3 +115,24 @@ function formatDigest(items: MoltbookCrossPollination[]): string {
   );
   return `From Moltbook:\n${lines.join("\n")}`;
 }
+
+/**
+ * Send a morning briefing message to all moltbook-enabled WhatsApp chats.
+ */
+export async function sendBriefing(sock: WASocket, message: string): Promise<void> {
+  const fsModule = await import("fs");
+  const raw = fsModule.readFileSync(config.chatsConfigFile, "utf-8");
+  const chats = JSON.parse(raw);
+
+  for (const [jid, chatConfig] of Object.entries(chats)) {
+    if (jid === "default") continue;
+    if (!(chatConfig as any).moltbook) continue;
+
+    try {
+      await sendTextMessage(sock, jid, message);
+      console.log(`[briefing] Sent morning briefing to ${jid}`);
+    } catch (err: any) {
+      console.error(`[briefing] Failed to send briefing to ${jid}:`, err.message);
+    }
+  }
+}

@@ -4,8 +4,9 @@ import { loadState, saveState, isProcessed, markProcessed, isDmAllowed, allowDm 
 import { askClaude, getChatConfig, ensureChatConfig, saveNotes, readNotes } from "./ai.js";
 import { loadPending, savePending } from "./pending.js";
 import type { ChatMessage, ClaudeResponse } from "./types.js";
-import { runMoltbookCycle } from "./moltbook/cycle.js";
-import { handleMoltbookAction, sendCrossPollination } from "./moltbook/whatsapp-bridge.js";
+import { runMoltbookCycle, runMorningBriefing } from "./moltbook/cycle.js";
+import { handleMoltbookAction, sendCrossPollination, sendBriefing } from "./moltbook/whatsapp-bridge.js";
+import { loadMoltbookState, hasRunToday } from "./moltbook/state.js";
 
 // How often to check accumulated messages and maybe respond (ms)
 const PROCESS_INTERVAL = parseInt(process.env.PROCESS_INTERVAL || "60000", 10);
@@ -149,15 +150,6 @@ function onOutgoingDm(dmJid: string) {
 }
 
 async function processPending() {
-  // Send any queued Moltbook cross-pollination digests (independent of pending messages)
-  if (config.moltbookApiKey && isConnected()) {
-    try {
-      await sendCrossPollination(getCurrentSocket()!);
-    } catch (err: any) {
-      console.error("[moltbook] Cross-pollination failed:", err.message);
-    }
-  }
-
   if (pendingByChat.size === 0) return;
 
   if (!isConnected()) {
@@ -300,7 +292,7 @@ async function main() {
   console.log(`Pending messages restored: ${pendingIds.size}`);
 
   if (config.moltbookApiKey) {
-    console.log(`Moltbook enabled — heartbeat every ${Math.round(config.moltbookHeartbeatInterval / 3600000)}h`);
+    console.log("Moltbook enabled — morning briefing at 05:30 UK time");
   } else {
     console.log("Moltbook disabled (no MOLTBOOK_API_KEY)");
   }
@@ -310,21 +302,35 @@ async function main() {
   // Periodically process accumulated messages
   setInterval(processPending, PROCESS_INTERVAL);
 
-  // Moltbook autonomous participation heartbeat
-  if (config.moltbookApiKey) {
-    // Run first cycle after a short delay (let WhatsApp connect first)
-    setTimeout(() => {
-      runMoltbookCycle().catch((err) =>
-        console.error("[moltbook] Cycle error:", err),
-      );
-    }, 30_000);
+  // Morning briefing: check every process-loop tick if it's time
+  let briefingRunning = false;
+  async function checkMorningBriefing(): Promise<void> {
+    if (!config.moltbookApiKey || briefingRunning || !isConnected()) return;
 
-    setInterval(() => {
-      runMoltbookCycle().catch((err) =>
-        console.error("[moltbook] Cycle error:", err),
-      );
-    }, config.moltbookHeartbeatInterval);
+    const mState = loadMoltbookState();
+    if (hasRunToday(mState)) return;
+
+    // Check if it's past 05:30 UK time
+    const ukNow = new Date(new Date().toLocaleString("en-US", { timeZone: "Europe/London" }));
+    const ukHour = ukNow.getHours();
+    const ukMinute = ukNow.getMinutes();
+    if (ukHour < 5 || (ukHour === 5 && ukMinute < 30)) return;
+
+    briefingRunning = true;
+    try {
+      console.log("[briefing] Time for morning briefing");
+      const message = await runMorningBriefing();
+      if (message) {
+        await sendBriefing(getCurrentSocket()!, message);
+      }
+    } catch (err: any) {
+      console.error("[briefing] Error:", err.message);
+    } finally {
+      briefingRunning = false;
+    }
   }
+
+  setInterval(checkMorningBriefing, PROCESS_INTERVAL);
 
   // Keep process alive
   process.on("SIGINT", () => {

@@ -85,6 +85,12 @@ export interface MoltbookCycleResponse {
   notes: string;
 }
 
+// Morning briefing response
+export interface BriefingResponse {
+  message: string | null;
+  journalEntry: string;
+}
+
 // State tracking
 export interface MoltbookState {
   seenPostIds: string[];
@@ -93,6 +99,8 @@ export interface MoltbookState {
   // Rate limit tracking
   lastPostTimestamp: number;
   commentTimestamps: number[];  // last hour of comment timestamps
+  // Morning briefing tracking
+  lastRunDate: string;  // ISO date string e.g. "2026-02-02"
 }
 
 // Search results

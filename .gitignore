@@ -9,4 +9,5 @@ data/pending.json
 data/cron.log
 data/.kleinbot.lock
 data/moltbook-state.json
+data/moltbook-journal.md
 .claude/

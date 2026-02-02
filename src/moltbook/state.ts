@@ -1,6 +1,10 @@
 import fs from "fs";
+import path from "path";
 import { config } from "../config.js";
 import type { MoltbookState, MoltbookCrossPollination } from "./types.js";
+
+const JOURNAL_PATH = path.join(path.dirname(config.moltbookStateFile), "moltbook-journal.md");
+const MAX_JOURNAL_CHARS = 8000;
 
 const MAX_SEEN_POSTS = 500;
 const MAX_COMMENT_TIMESTAMPS = 100;
@@ -17,6 +21,7 @@ function defaultState(): MoltbookState {
     crossPollinationQueue: [],
     lastPostTimestamp: 0,
     commentTimestamps: [],
+    lastRunDate: "",
   };
 }
 
@@ -88,4 +93,41 @@ export function drainCrossPollination(
   const items = state.crossPollinationQueue;
   state.crossPollinationQueue = [];
   return items;
+}
+
+// --- Morning briefing helpers ---
+
+function todayUK(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" });
+}
+
+export function hasRunToday(state: MoltbookState): boolean {
+  return state.lastRunDate === todayUK();
+}
+
+export function markRunToday(state: MoltbookState): void {
+  state.lastRunDate = todayUK();
+}
+
+export function readJournal(): string {
+  try {
+    return fs.readFileSync(JOURNAL_PATH, "utf-8");
+  } catch {
+    return "";
+  }
+}
+
+export function appendJournal(entry: string): void {
+  const existing = readJournal();
+  const dated = `## ${todayUK()}\n${entry}\n\n`;
+  let updated = existing + dated;
+
+  // Trim from the front if over budget
+  while (updated.length > MAX_JOURNAL_CHARS) {
+    const idx = updated.indexOf("\n## ", 1);
+    if (idx === -1) break;
+    updated = updated.slice(idx + 1);
+  }
+
+  fs.writeFileSync(JOURNAL_PATH, updated);
 }
