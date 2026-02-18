@@ -48,9 +48,14 @@ class SignalRpcClient {
     return this._connected;
   }
 
-  connect(onNotification: (method: string, params: Record<string, unknown>) => void): Promise<void> {
+  async connect(onNotification: (method: string, params: Record<string, unknown>) => void): Promise<void> {
     this.onNotification = onNotification;
-    return this.doConnect();
+    await this.doConnect();
+    await this.subscribe();
+  }
+
+  private async subscribe(): Promise<void> {
+    await this.call("subscribeReceive");
   }
 
   private doConnect(): Promise<void> {
@@ -132,6 +137,7 @@ class SignalRpcClient {
       this.reconnectTimer = null;
       try {
         await this.doConnect();
+        await this.subscribe();
         console.log("[signal-rpc] Reconnected to signal-cli");
       } catch (err: any) {
         console.error("[signal-rpc] Reconnect failed:", err.message);
@@ -216,7 +222,8 @@ export function createSignalTransport(
       await rpc.connect((method, params) => {
         if (method !== "receive") return;
 
-        const envelope = (params as any).envelope;
+        // Two notification formats: direct (params.envelope) and subscription (params.result.envelope)
+        const envelope = (params as any).envelope || (params as any).result?.envelope;
         if (!envelope) return;
 
         // Skip own messages

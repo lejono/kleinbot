@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 # Edit this: set your registered phone number
-ExecStart=%h/.local/lib/signal-cli/bin/signal-cli -a +44XXXXXXXXXX daemon --socket
+ExecStart=%h/.local/bin/signal-cli -a +44XXXXXXXXXX daemon --socket --receive-mode on-connection
 Restart=on-failure
 RestartSec=10
 
