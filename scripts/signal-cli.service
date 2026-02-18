@@ -1,0 +1,17 @@
+[Unit]
+Description=signal-cli daemon (JSON-RPC socket mode)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Edit this: set your registered phone number
+ExecStart=%h/.local/lib/signal-cli/bin/signal-cli -a +44XXXXXXXXXX daemon --socket
+Restart=on-failure
+RestartSec=10
+
+# Socket will be created at $XDG_RUNTIME_DIR/signal-cli/socket
+RuntimeDirectory=signal-cli
+
+[Install]
+WantedBy=default.target

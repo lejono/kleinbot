@@ -1,4 +1,4 @@
-# Kleinbot — WhatsApp Chat Facilitation Bot
+# Kleinbot — Multi-Transport Chat Facilitation Bot
 
 ## Architecture
 
@@ -40,12 +40,17 @@ Baileys as a linked/companion device does NOT receive offline messages — it on
 - `src/moltbook/state.ts` — Moltbook state: seen posts, rate limit tracking, cross-pollination queue
 - `src/moltbook/types.ts` — Moltbook-specific interfaces
 - `src/moltbook/whatsapp-bridge.ts` — Handles WhatsApp-triggered Moltbook commands; sends cross-pollination digests to moltbook-enabled chats
-- `prompts/chats.json` — Per-chat config: maps JIDs to prompt files and model names
+- `src/signal.ts` — Signal transport: `SignalRpcClient` (Unix socket JSON-RPC to signal-cli daemon), `createSignalTransport()` factory. No npm deps (uses Node `net` module).
+- `src/index-signal.ts` — Signal entry point (same pattern as index-discord.ts)
+- `prompts/chats.json` — Per-chat config for WhatsApp: maps JIDs to prompt files and model names
+- `prompts/signal-chats.json` — Per-chat config for Signal (phone numbers / base64 group IDs)
 - `prompts/default.md` — Default bot personality and decision rules
 - `prompts/moltbook.md` — System prompt for autonomous Moltbook participation (with prompt injection defense)
 - `prompts/briefing.md` — System prompt for daily morning briefing (Moltbook + web search)
 - `scripts/setup.sh` — npm install + directory setup
 - `scripts/cron-run.sh` — Simple runner script (for systemd or manual use)
+- `scripts/signal-setup.sh` — Downloads native signal-cli binary, creates data dirs
+- `scripts/signal-cli.service` — Systemd user service for signal-cli daemon (socket mode)
 - `scripts/moltbook-register.ts` — One-time Moltbook registration (prints API key + claim URL)
 - `data/notes/` — Bot's self-written notes per chat (persistent memory)
 - `data/moltbook-state.json` — Seen posts, rate limits, cross-pollination queue, lastRunDate (gitignored)
@@ -59,6 +64,9 @@ Baileys as a linked/companion device does NOT receive offline messages — it on
 - `HISTORY_WINDOW` — Rolling message context size (default: 50)
 - `LOG_LEVEL` — Pino log level for Baileys (default: "warn", use "debug" for troubleshooting)
 - `MOLTBOOK_API_KEY` — Moltbook API key (get from `npx tsx scripts/moltbook-register.ts`). If unset, Moltbook features are disabled. Morning briefing runs daily at 05:30 UK time.
+- `SIGNAL_ACCOUNT` — Bot's registered Signal phone number (e.g. `+447123456789`)
+- `SIGNAL_ADMIN_NUMBER` — Admin's phone number for `/commands` (optional)
+- `SIGNAL_SOCKET_PATH` — Override signal-cli socket path (default: `$XDG_RUNTIME_DIR/signal-cli/socket`)
 
 ## Per-chat Configuration (prompts/chats.json)
 
@@ -110,7 +118,10 @@ Important: `fetchLatestBaileysVersion()` is called on startup to get the current
 ```bash
 npm install                    # install deps
 npx tsc --noEmit               # type check
-npx tsx src/index.ts            # run (shows QR on first run, then stays connected)
+npx tsx src/index-whatsapp.ts   # WhatsApp transport
+npx tsx src/index-discord.ts    # Discord transport
+npx tsx src/index-slack.ts      # Slack transport
+npx tsx src/index-signal.ts     # Signal transport (requires signal-cli daemon)
 ```
 
 For production, use a systemd user service (see README.md for full setup).
@@ -142,3 +153,4 @@ Codex: read this file as your project context. It serves the same purpose as `AG
 - Moltbook WhatsApp commands ("what's hot on Moltbook") — wired up, waiting on API fix
 - Moltbook cross-pollination — queuing works, delivery to WhatsApp chats works
 - Moltbook profile: https://www.moltbook.com/u/Kleinbot | Twitter: @KleinBot2026
+- Signal transport — implemented, connects to signal-cli daemon via Unix socket JSON-RPC, no new npm deps

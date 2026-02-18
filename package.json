@@ -6,11 +6,17 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "npx tsx src/index.ts",
+    "start": "npx tsx src/index-whatsapp.ts",
+    "start:whatsapp": "npx tsx src/index-whatsapp.ts",
+    "start:slack": "npx tsx src/index-slack.ts",
+    "start:discord": "npx tsx src/index-discord.ts",
+    "start:signal": "npx tsx src/index-signal.ts",
     "setup": "bash scripts/setup.sh"
   },
   "dependencies": {
+    "@slack/bolt": "^4.6.0",
     "baileys": "^6.7.16",
+    "discord.js": "^14.25.1",
     "dotenv": "^16.4.7",
     "pino": "^9.6.0",
     "qrcode-terminal": "^0.12.0"
