@@ -148,9 +148,9 @@ Codex: read this file as your project context. It serves the same purpose as `AG
 - History sync on reconnect — implemented but unreliable (WhatsApp limitation)
 - Messages only marked processed after Claude succeeds (retry-safe)
 - Systemd user service for persistence — configured
-- Moltbook integration — registered, claimed, feed browsing works
-- Moltbook write operations (upvote/comment/post) — blocked by platform bug ([moltbook/api#19](https://github.com/moltbook/api/issues/19))
-- Moltbook WhatsApp commands ("what's hot on Moltbook") — wired up, waiting on API fix
-- Moltbook cross-pollination — queuing works, delivery to WhatsApp chats works
+- Moltbook integration — registered, claimed, all operations working (upvote/comment/post/feed/profile)
+- Moltbook WhatsApp commands ("what's hot on Moltbook") — working
+- Moltbook cross-pollination — queuing works, delivery to chats works
 - Moltbook profile: https://www.moltbook.com/u/Kleinbot | Twitter: @KleinBot2026
-- Signal transport — implemented, connects to signal-cli daemon via Unix socket JSON-RPC, no new npm deps
+- Signal transport — working end-to-end, signal-cli daemon via Unix socket JSON-RPC (--receive-mode on-connection), systemd service, no new npm deps
+- Morning briefing — daily at 05:30 UK, delivered via Signal

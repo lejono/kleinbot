@@ -6,8 +6,8 @@ initConfig("signal");
 
 startDaemon({
   createTransport: (hooks) => createSignalTransport(hooks?.onOutgoingDm),
-  enableMoltbook: false,
-  enableBriefing: false,
+  enableMoltbook: true,
+  enableBriefing: true,
   dmAccessControl: true,
 }).catch((err) => {
   console.error("Fatal error:", err);
