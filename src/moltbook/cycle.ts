@@ -3,6 +3,8 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { config } from "../config.js";
+
+const CLAUDE_BIN = process.env.CLAUDE_BIN || "/home/jono/.npm-global/bin/claude";
 import * as client from "./client.js";
 import {
   loadMoltbookState,
@@ -67,14 +69,14 @@ function formatCommentsForPrompt(comments: MoltbookComment[]): string {
 
 async function callClaudeForCycle(prompt: string, systemPrompt: string): Promise<MoltbookCycleResponse> {
   const result = await new Promise<string>((resolve, reject) => {
-    const proc = spawn("claude", [
+    const proc = spawn(CLAUDE_BIN, [
       "--print",
-      "--model", "sonnet",
+      "--model", "opus",
       "--no-session-persistence",
       "--system-prompt", systemPrompt,
     ], {
       stdio: ["pipe", "pipe", "pipe"],
-      timeout: 120_000,
+      timeout: 300_000,
     });
 
     let stdout = "";
@@ -129,14 +131,14 @@ async function callClaudeForComment(
   ].filter(Boolean).join("\n");
 
   const result = await new Promise<string>((resolve, reject) => {
-    const proc = spawn("claude", [
+    const proc = spawn(CLAUDE_BIN, [
       "--print",
-      "--model", "sonnet",
+      "--model", "opus",
       "--no-session-persistence",
       "--system-prompt", systemPrompt,
     ], {
       stdio: ["pipe", "pipe", "pipe"],
-      timeout: 60_000,
+      timeout: 120_000,
     });
 
     let stdout = "";
@@ -375,7 +377,7 @@ export async function runMorningBriefing(): Promise<string | null> {
   let result: string;
   try {
     result = await new Promise<string>((resolve, reject) => {
-      const proc = spawn("claude", [
+      const proc = spawn(CLAUDE_BIN, [
         "--print",
         "--model", "opus",
         "--allowedTools", "WebSearch,WebFetch",

@@ -147,7 +147,60 @@ export async function addComment(
     apiKey,
     { method: "POST", body: JSON.stringify(body) },
   );
+
+  // Handle verification challenge if present
+  const verification = json.comment?.verification;
+  if (verification?.verification_code && verification?.challenge_text) {
+    const answer = solveVerificationChallenge(verification.challenge_text);
+    if (answer !== null) {
+      await rawRequest("/verify", apiKey, {
+        method: "POST",
+        body: JSON.stringify({
+          verification_code: verification.verification_code,
+          answer: answer.toFixed(2),
+        }),
+      });
+      console.log(`[moltbook] Verified comment (challenge answer: ${answer.toFixed(2)})`);
+    } else {
+      console.warn(`[moltbook] Could not solve verification challenge: ${verification.challenge_text}`);
+    }
+  }
+
   return (json.comment || json) as MoltbookComment;
+}
+
+/**
+ * Solve a Moltbook verification challenge.
+ * Challenges are obfuscated math like:
+ *   "lObStEr hAs cLaW fOrCe nEwToNs: tWeNtY fIvE nEwToNs * tHrEe cLaWs, wHaT Is ToTaL?"
+ * Strategy: strip noise, extract numbers, find operator (* + -), compute.
+ */
+function solveVerificationChallenge(challenge: string): number | null {
+  // Normalize: lowercase, strip non-alphanumeric except operators
+  const clean = challenge.toLowerCase().replace(/[^a-z0-9.*+\-/\s]/g, " ");
+
+  // Extract all numbers (digits)
+  const numbers = clean.match(/\d+(\.\d+)?/g)?.map(Number) || [];
+
+  if (numbers.length >= 2) {
+    // Find the operator
+    if (clean.includes("*") || clean.includes("times") || clean.includes("multiply")) {
+      return numbers[0] * numbers[1];
+    }
+    if (clean.includes("+") || clean.includes("plus") || clean.includes("add") || clean.includes("total")) {
+      return numbers[0] + numbers[1];
+    }
+    if (clean.includes("-") || clean.includes("minus") || clean.includes("subtract")) {
+      return numbers[0] - numbers[1];
+    }
+    if (clean.includes("/") || clean.includes("divide")) {
+      return numbers[1] !== 0 ? numbers[0] / numbers[1] : null;
+    }
+    // Default: multiply (most common pattern)
+    return numbers[0] * numbers[1];
+  }
+
+  return null;
 }
 
 // --- Voting ---
