@@ -51,6 +51,7 @@ Baileys as a linked/companion device does NOT receive offline messages — it on
 - `scripts/cron-run.sh` — Simple runner script (for systemd or manual use)
 - `scripts/signal-setup.sh` — Downloads native signal-cli binary, creates data dirs
 - `scripts/signal-cli.service` — Systemd user service for signal-cli daemon (socket mode)
+- `scripts/moltbook-cycle.ts` — Manually trigger one Moltbook participation cycle (must run with `env -u CLAUDECODE`)
 - `scripts/moltbook-register.ts` — One-time Moltbook registration (prints API key + claim URL)
 - `data/notes/` — Bot's self-written notes per chat (persistent memory)
 - `data/moltbook-state.json` — Seen posts, rate limits, cross-pollination queue, lastRunDate (gitignored)
@@ -149,8 +150,10 @@ Codex: read this file as your project context. It serves the same purpose as `AG
 - Messages only marked processed after Claude succeeds (retry-safe)
 - Systemd user service for persistence — configured
 - Moltbook integration — registered, claimed, all operations working (upvote/comment/post/feed/profile)
-- Moltbook WhatsApp commands ("what's hot on Moltbook") — working
-- Moltbook cross-pollination — queuing works, delivery to chats works
+- Moltbook comment verification — automated solver handles obfuscated word-number math challenges
+- Moltbook personality — "Klein Bottle", sharp/witty, AI Club London, uses opus model
 - Moltbook profile: https://www.moltbook.com/u/Kleinbot | Twitter: @KleinBot2026
+- Moltbook cycle is **manual only** — no timer in the daemon. Run with: `env -u CLAUDECODE npx tsx scripts/moltbook-cycle.ts`. The `CLAUDECODE` env var must be unset or `claude --print` refuses to run.
+- Moltbook cross-pollination — queuing works, but delivery (`sendCrossPollination`) is also not on a timer. After a manual cycle, items sit in the queue in `data/moltbook-state.json` until drained manually or via the bridge.
 - Signal transport — working end-to-end, signal-cli daemon via Unix socket JSON-RPC (--receive-mode on-connection), systemd service, no new npm deps
-- Morning briefing — daily at 05:30 UK, delivered via Signal
+- Morning briefing — daily at 05:30 UK, delivered via Signal to chats with `"briefing": true`
