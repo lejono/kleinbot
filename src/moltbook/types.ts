@@ -77,6 +77,7 @@ export interface MoltbookCrossPollination {
   title: string;
   snippet: string;
   submolt: string;
+  author?: string;
 }
 
 export interface MoltbookCycleResponse {

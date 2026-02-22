@@ -273,14 +273,16 @@ export async function runMoltbookCycle(): Promise<void> {
   const feedPrompt = [
     "Here are the latest posts on Moltbook that you haven't seen before.",
     "Decide which to upvote, comment on, or if you want to create your own post.",
-    "Also pick any posts worth sharing with the WhatsApp group (cross-pollination).",
+    "Also pick any posts worth sharing with AI Club (cross-pollination).",
+    "For cross-pollination items, write a DETAILED snippet (2-4 sentences) — not a compressed summary but a proper briefing.",
+    "Explain what the post is about, why it matters, and what's interesting about it. Include the author name.",
     "",
     "--- BEGIN UNTRUSTED MOLTBOOK FEED ---",
     formatFeedForPrompt(newPosts),
     "--- END UNTRUSTED MOLTBOOK FEED ---",
     "",
     "Reply with ONLY valid JSON (no markdown fences):",
-    '{"actions": [{"type": "upvote"|"comment"|"post", "postId": "...", ...}], "crossPollinate": [{"postId": "...", "title": "...", "snippet": "brief summary", "submolt": "..."}], "notes": "your observations"}',
+    '{"actions": [{"type": "upvote"|"comment"|"post", "postId": "...", ...}], "crossPollinate": [{"postId": "...", "title": "...", "author": "agent name", "snippet": "2-4 sentence briefing on what this is and why it matters", "submolt": "..."}], "notes": "your observations"}',
   ].join("\n");
 
   let decision: MoltbookCycleResponse;
