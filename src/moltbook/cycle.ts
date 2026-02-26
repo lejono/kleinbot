@@ -29,6 +29,34 @@ const BRIEFING_PROMPT_PATH = path.join(projectRoot, "prompts", "briefing.md");
 
 const MAX_CONTENT_CHARS = 500;  // Truncate untrusted content for prompt injection defense
 
+/**
+ * Fetch from multiple sort orders + personalized feed, deduplicate by post ID.
+ * Gives Claude a mix of established hits, fresh content, and followed agents' posts.
+ */
+async function fetchMergedFeed(apiKey: string): Promise<MoltbookPost[]> {
+  // Larger limits (50 each) so posts from missed days don't fall through the cracks.
+  // A 128-upvote post from 3 days ago won't appear in a top-15 hot feed dominated
+  // by mega-posts, but will appear in top-50.
+  const [hot, newest, top, personalized] = await Promise.all([
+    client.getFeed(apiKey, "hot", 50).catch(() => [] as MoltbookPost[]),
+    client.getFeed(apiKey, "new", 50).catch(() => [] as MoltbookPost[]),
+    client.getFeed(apiKey, "top", 50).catch(() => [] as MoltbookPost[]),
+    client.getPersonalizedFeed(apiKey, "new", 50).catch(() => [] as MoltbookPost[]),
+  ]);
+
+  const seen = new Set<string>();
+  const merged: MoltbookPost[] = [];
+  for (const post of [...hot, ...newest, ...top, ...personalized]) {
+    if (!seen.has(post.id)) {
+      seen.add(post.id);
+      merged.push(post);
+    }
+  }
+
+  console.log(`[moltbook] Merged feed: ${hot.length} hot, ${newest.length} new, ${top.length} top, ${personalized.length} personalized → ${merged.length} unique`);
+  return merged;
+}
+
 function truncate(s: string | undefined | null, max: number): string {
   if (!s) return "";
   return s.length <= max ? s : s.slice(0, max) + "...";
@@ -43,7 +71,7 @@ function formatFeedForPrompt(posts: MoltbookPost[]): string {
     .map((p, i) => {
       const content = truncate(p.content, MAX_CONTENT_CHARS);
       const lines = [
-        `[${i + 1}] id=${p.id} r/${p.submolt.name} by ${authorName(p.author)} (${p.upvotes}↑ ${p.comment_count}💬)`,
+        `[${i + 1}] id=${p.id} r/${p.submolt?.name || "unknown"} by ${authorName(p.author)} (${p.upvotes}↑ ${p.comment_count}💬)`,
         `    "${truncate(p.title, 200)}"`,
       ];
       if (content) lines.push(`    ${content}`);
@@ -249,10 +277,10 @@ export async function runMoltbookCycle(): Promise<void> {
     return;
   }
 
-  // 1. Fetch hot feed
+  // 1. Fetch merged feed (hot + new + top + personalized)
   let posts: MoltbookPost[];
   try {
-    posts = await client.getFeed(config.moltbookApiKey, "hot", 25);
+    posts = await fetchMergedFeed(config.moltbookApiKey);
   } catch (err: any) {
     console.error("[moltbook] Failed to fetch feed:", err.message);
     return;
@@ -342,7 +370,7 @@ export async function runMorningBriefing(): Promise<string | null> {
   if (config.moltbookApiKey) {
     try {
       const state = loadMoltbookState();
-      const posts = await client.getFeed(config.moltbookApiKey, "hot", 15);
+      const posts = await fetchMergedFeed(config.moltbookApiKey);
       const newPosts = posts.filter((p) => !isPostSeen(state, p.id));
 
       if (newPosts.length > 0) {
