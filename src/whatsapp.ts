@@ -10,6 +10,7 @@ import pino from "pino";
 import qrcode from "qrcode-terminal";
 import { config } from "./config.js";
 import type { ChatMessage, PollData } from "./types.js";
+import type { Transport } from "./transport.js";
 
 const logger = pino({ level: process.env.LOG_LEVEL || "warn" });
 
@@ -36,7 +37,7 @@ export async function startConnection(
   onMessage: MessageHandler,
   onOutgoingDm?: OutgoingDmHandler
 ): Promise<WASocket> {
-  const { version } = await fetchLatestBaileysVersion();
+  let { version } = await fetchLatestBaileysVersion();
   console.log("Using WA Web version:", version.join("."));
 
   const startSocket = async (): Promise<WASocket> => {
@@ -75,6 +76,16 @@ export async function startConnection(
         // Auto-reconnect for any other close reason
         console.log(`Disconnected (status ${statusCode}), reconnecting in 5s...`);
         await new Promise(r => setTimeout(r, 5000));
+        // Re-fetch version on 405 (version rejected by WhatsApp)
+        if (statusCode === 405) {
+          try {
+            const fresh = await fetchLatestBaileysVersion();
+            version = fresh.version;
+            console.log("Re-fetched WA Web version:", version.join("."));
+          } catch (err) {
+            console.error("Failed to fetch latest version, retrying with current:", err);
+          }
+        }
         startSocket();
       }
     });
@@ -173,6 +184,17 @@ export async function sendTextMessage(
   await sock.sendMessage(jid, { text });
 }
 
+export async function sendDocumentMessage(
+  sock: WASocket,
+  jid: string,
+  buffer: Buffer,
+  fileName: string,
+  mimetype: string,
+  caption?: string
+): Promise<void> {
+  await sock.sendMessage(jid, { document: buffer, mimetype, fileName, caption });
+}
+
 export async function sendPollMessage(
   sock: WASocket,
   jid: string,
@@ -185,4 +207,55 @@ export async function sendPollMessage(
       selectableCount: poll.multiSelect ? 0 : 1,
     },
   });
+}
+
+/**
+ * Factory: wraps the module-level WhatsApp connection into a Transport.
+ */
+export function createWhatsAppTransport(
+  onOutgoingDm?: (dmJid: string) => void,
+): Transport {
+  return {
+    name: "whatsapp",
+
+    async start(onMessage) {
+      await startConnection(onMessage, onOutgoingDm);
+    },
+
+    isConnected() {
+      return connected && currentSock !== null;
+    },
+
+    async sendText(chatId, text) {
+      await sendTextMessage(currentSock!, chatId, text);
+    },
+
+    async sendFile(chatId, buffer, fileName, mimetype, caption) {
+      await sendDocumentMessage(currentSock!, chatId, buffer, fileName, mimetype, caption);
+      return true;
+    },
+
+    async sendPoll(chatId, poll) {
+      await sendPollMessage(currentSock!, chatId, poll);
+      return true;
+    },
+
+    isDm(chatId) {
+      // WhatsApp DMs: classic format (@s.whatsapp.net) or LID format (@lid)
+      return chatId.endsWith("@s.whatsapp.net") || chatId.endsWith("@lid");
+    },
+
+    isGroup(chatId) {
+      return chatId.endsWith("@g.us");
+    },
+
+    async fetchGroupDescription(chatId) {
+      if (!currentSock) return null;
+      return fetchGroupDescription(currentSock, chatId);
+    },
+
+    shutdown() {
+      currentSock?.end(undefined);
+    },
+  };
 }
