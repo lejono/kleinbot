@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Kleinbot's Signal transport. Depends on net.postquantum.signal-cli having
+  created run/signal.sock, but launchd has no dependency ordering: if this
+  starts first it exits on the missing socket and KeepAlive restarts it, at
+  most once per ThrottleInterval, until signal-cli is up.
+
+  World-readable, so no secrets here: ENTOURAGE_RECIPIENT, SIGNAL_ADMIN_NUMBER
+  and the Claude token come from the mode-600 env files via run-daemon.sh.
+-->
+<plist version="1.0"><dict>
+  <key>Label</key><string>net.postquantum.kleinbot-signal</string>
+  <key>UserName</key><string>kleinbot</string>
+  <key>GroupName</key><string>staff</string>
+  <key>WorkingDirectory</key><string>/Users/kleinbot/src/team/kleinbot</string>
+  <key>ProgramArguments</key><array>
+    <string>/Users/kleinbot/team/kleinbot/bin/run-daemon.sh</string>
+    <string>kleinbot-signal</string>
+  </array>
+  <key>EnvironmentVariables</key><dict>
+    <!--
+      .local/bin first: Claude Code is installed there by the official
+      installer, and src/ai.ts spawns a bare `claude` resolved through PATH.
+      launchd execs the wrapper directly with no login shell, so the .zshrc
+      that normally supplies this path is never read.
+    -->
+    <key>PATH</key><string>/Users/kleinbot/.local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    <key>KLEINBOT_RUNTIME_DIR</key><string>/Users/kleinbot/team/kleinbot</string>
+    <key>ENTOURAGE_FLAGS_DIR</key><string>/Users/kleinbot/team/kleinbot/entourage-inbox</string>
+    <!--
+      Attachments only, not the whole runtime tree: the relay delivers them to
+      entourage-inbox/attachments (ENTOURAGE_REMOTE_ATTACH_DIR in the monorepo
+      unit). The parent tree contains config/daemon.env, which a crafted flag
+      could otherwise name as an attachment and have sent out.
+    -->
+    <key>ENTOURAGE_ALLOW_ROOTS</key><string>/Users/kleinbot/team/kleinbot/entourage-inbox/attachments</string>
+    <key>SIGNAL_SOCKET_PATH</key><string>/Users/kleinbot/team/kleinbot/run/signal.sock</string>
+    <key>PROCESS_INTERVAL</key><string>5000</string>
+    <key>NODE_ENV</key><string>production</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>ThrottleInterval</key><integer>30</integer>
+  <key>StandardOutPath</key><string>/Users/kleinbot/team/kleinbot/logs/kleinbot-signal.log</string>
+  <key>StandardErrorPath</key><string>/Users/kleinbot/team/kleinbot/logs/kleinbot-signal.err.log</string>
+</dict></plist>

@@ -1,11 +1,37 @@
 node_modules/
 dist/
-data/auth/
-data/state.json
-data/notes/
+
+# User data — NEVER commit. Lives only in the runtime dir ~/team/kleinbot/.
+# Ship .example templates instead (e.g. prompts/*.example.md, chats.example.json).
+data/                 # message history, state, notes, activity log, raw capture
+prompts/              # ALL prompts, incl. per-group prompts (these are user data, not system code)
+config/               # runtime config
+
+# Credentials / identifiers (phone numbers, JIDs, group IDs, tokens)
 .env
-prompts/chats.json
-data/pending.json
-data/cron.log
-data/.kleinbot.lock
+*.env
+!.env.example
+
+# Claude Code
 .claude/
+
+# Playwright
+.playwright-mcp/
+
+# Editor / OS
+*.swp
+*~
+.~lock.*
+*.backup
+
+# Stray media (attachments are user data — keep them out of the repo)
+*.mp3
+*.m4a
+*.aac
+*.ogg
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+*.pdf

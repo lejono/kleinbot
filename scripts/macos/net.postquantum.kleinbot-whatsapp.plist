@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Kleinbot's WhatsApp transport. PROCESS_INTERVAL is 10 minutes (600000 ms):
+  this is group chat, where over-eager replies are the failure mode. The Signal
+  daemon uses 5000 ms because those are DMs.
+
+  Until the Baileys device is re-paired on the Mac this crash-loops on missing
+  auth; ThrottleInterval paces it. Alternatively leave this daemon uninstalled
+  until then and give install.sh its per-daemon flag for the Signal pair only.
+
+  World-readable, so no secrets here — see run-daemon.sh.
+-->
+<plist version="1.0"><dict>
+  <key>Label</key><string>net.postquantum.kleinbot-whatsapp</string>
+  <key>UserName</key><string>kleinbot</string>
+  <key>GroupName</key><string>staff</string>
+  <key>WorkingDirectory</key><string>/Users/kleinbot/src/team/kleinbot</string>
+  <key>ProgramArguments</key><array>
+    <string>/Users/kleinbot/team/kleinbot/bin/run-daemon.sh</string>
+    <string>kleinbot-whatsapp</string>
+  </array>
+  <key>EnvironmentVariables</key><dict>
+    <!--
+      .local/bin first: Claude Code is installed there by the official
+      installer, and src/ai.ts spawns a bare `claude` resolved through PATH.
+      launchd execs the wrapper directly with no login shell, so the .zshrc
+      that normally supplies this path is never read.
+    -->
+    <key>PATH</key><string>/Users/kleinbot/.local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    <key>KLEINBOT_RUNTIME_DIR</key><string>/Users/kleinbot/team/kleinbot</string>
+    <!--
+      Deliberately NOT the shared entourage-inbox ingress that the relay
+      writes into. daemon.ts starts the entourage watcher for every transport,
+      so pointing both daemons at the ingress would have them racing to drain
+      the same outgoing/ directory: dedup is per-process and the archiving
+      rename happens after the send, so the loser has already delivered. An
+      outbound notification meant for Signal would go out twice, or go out from here to
+      a bare phone number treated as a WhatsApp JID. This daemon gets its own
+      directory, which the watcher creates and then idles on.
+      Follow-up: gate startEntourageWatcher on transport in daemon.ts rather
+      than relying on this env plumbing.
+    -->
+    <key>ENTOURAGE_FLAGS_DIR</key><string>/Users/kleinbot/team/kleinbot/entourage-inbox-whatsapp</string>
+    <!--
+      Attachments only, not the whole runtime tree, which contains
+      config/daemon.env. See the Signal plist.
+    -->
+    <key>ENTOURAGE_ALLOW_ROOTS</key><string>/Users/kleinbot/team/kleinbot/entourage-inbox/attachments</string>
+    <key>PROCESS_INTERVAL</key><string>600000</string>
+    <key>NODE_ENV</key><string>production</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>ThrottleInterval</key><integer>30</integer>
+  <key>StandardOutPath</key><string>/Users/kleinbot/team/kleinbot/logs/kleinbot-whatsapp.log</string>
+  <key>StandardErrorPath</key><string>/Users/kleinbot/team/kleinbot/logs/kleinbot-whatsapp.err.log</string>
+</dict></plist>

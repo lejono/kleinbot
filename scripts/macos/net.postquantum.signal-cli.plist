@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  signal-cli in JSON-RPC socket mode. A LaunchDaemon, not a LaunchAgent: the
+  kleinbot account never logs into the GUI, so no Aqua session exists for an
+  agent to be bootstrapped into.
+
+  This file is world-readable. SIGNAL_ACCOUNT (a phone number) is therefore NOT
+  here — run-daemon.sh sources it from the mode-600 config/.env.
+-->
+<plist version="1.0"><dict>
+  <key>Label</key><string>net.postquantum.signal-cli</string>
+  <key>UserName</key><string>kleinbot</string>
+  <key>GroupName</key><string>staff</string>
+  <key>WorkingDirectory</key><string>/Users/kleinbot</string>
+  <key>ProgramArguments</key><array>
+    <string>/Users/kleinbot/team/kleinbot/bin/run-daemon.sh</string>
+    <string>signal-cli</string>
+  </array>
+  <key>EnvironmentVariables</key><dict>
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/bin:/bin</string>
+    <key>KLEINBOT_RUNTIME_DIR</key><string>/Users/kleinbot/team/kleinbot</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>ThrottleInterval</key><integer>30</integer>
+  <key>StandardOutPath</key><string>/Users/kleinbot/team/kleinbot/logs/signal-cli.log</string>
+  <key>StandardErrorPath</key><string>/Users/kleinbot/team/kleinbot/logs/signal-cli.err.log</string>
+</dict></plist>

@@ -77,12 +77,39 @@ export function markProcessed(state: BotState, msg: ChatMessage): void {
   }
 }
 
-export function isDmAllowed(state: BotState, jid: string): boolean {
-  return state.allowedDmJids.includes(jid);
+export function isDmAllowed(state: BotState, jid: string, senderJid?: string): boolean {
+  return state.allowedDmJids.includes(jid)
+    || (!!senderJid && senderJid !== jid && state.allowedDmJids.includes(senderJid));
 }
 
 export function allowDm(state: BotState, jid: string): boolean {
   if (state.allowedDmJids.includes(jid)) return false;
   state.allowedDmJids.push(jid);
   return true;  // returns true if newly added
+}
+
+interface ChatKind {
+  isDm: boolean;
+  isGroup: boolean;
+  isKnownChat: boolean;  // already has a chats.json entry, i.e. previously onboarded
+}
+
+/**
+ * Whether a message must wait for admin approval before the bot acts on it.
+ * DMs are always gated. Groups are gated only the first time the bot sees
+ * them (isKnownChat === false) — once a group has been onboarded, any
+ * member can trigger normal responses. In both cases, a message from the
+ * admin, or from a chat already in allowedDmJids (via /allow), bypasses
+ * the gate.
+ */
+export function requiresApproval(
+  state: BotState,
+  msg: { chatJid: string; senderJid: string },
+  chatKind: ChatKind,
+  adminJid: string,
+): boolean {
+  const isNewGroup = chatKind.isGroup && !chatKind.isKnownChat;
+  if (!chatKind.isDm && !isNewGroup) return false;
+  if (adminJid && msg.senderJid === adminJid) return false;
+  return !isDmAllowed(state, msg.chatJid);
 }
