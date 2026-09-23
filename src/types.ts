@@ -97,6 +97,7 @@ export interface Config {
   chatsConfigFile: string;
   moltbookApiKey: string;
   moltbookStateFile: string;
+  adminGroupJid: string;          // optional admin-channel group ID, from env
   editorGroupJid: string;         // editor-agent group ID (user data, from env)
   // Slack-specific (empty for WhatsApp)
   slackAppToken: string;

@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { config } from "../config.js";
+import { config, crossPollinationQueueLimit } from "../config.js";
 import type { MoltbookState, MoltbookCrossPollination } from "./types.js";
 
 const MAX_JOURNAL_CHARS = 8000;
@@ -26,6 +26,7 @@ function defaultState(): MoltbookState {
   return {
     seenPostIds: [],
     lastCycleTimestamp: 0,
+    lastCycleAttemptAt: 0,
     crossPollinationQueue: [],
     lastPostTimestamp: 0,
     commentTimestamps: [],
@@ -95,7 +96,7 @@ export function enqueueCrossPollination(
   state: MoltbookState,
   items: MoltbookCrossPollination[],
 ): void {
-  state.crossPollinationQueue.push(...items);
+  state.crossPollinationQueue = [...state.crossPollinationQueue, ...items].slice(-crossPollinationQueueLimit);
 }
 
 export function drainCrossPollination(
@@ -247,4 +248,12 @@ export function appendJournal(entry: string): void {
   }
 
   fs.writeFileSync(getJournalPath(), updated);
+}
+
+export function isCycleDue(state: MoltbookState, now: number, intervalMs: number): boolean {
+  return !state.lastCycleAttemptAt || now - state.lastCycleAttemptAt >= intervalMs;
+}
+
+export function recordCycleAttempt(state: MoltbookState, now: number): void {
+  state.lastCycleAttemptAt = now;
 }

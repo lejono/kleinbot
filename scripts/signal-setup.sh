@@ -4,7 +4,13 @@ set -euo pipefail
 # Install signal-cli native Linux build to ~/.local/lib/signal-cli/
 # This avoids the Java dependency entirely.
 
-VERSION="0.13.24"
+# Keep VERSION at or above the release that last used an existing Signal data directory.
+# An older signal-cli on newer data fails to decrypt every incoming message
+# ("getServerGuid(...) must not be null") and loses it. SHA256 is of the release tarball,
+# checked against its GPG signature (AsamK, key FA10826A74907F9EC6BBB7FC2BA2CD21B5B09570);
+# update both together.
+VERSION="0.14.6"
+SHA256="c78639c2d3c14cd004872a99ecf129bd7d7c26ee7d9844d50c2b0afdafefea68"
 INSTALL_DIR="$HOME/.local/lib/signal-cli"
 BIN_DIR="$HOME/.local/bin"
 DATA_DIR="$(cd "$(dirname "$0")/.." && pwd)/data/signal"
@@ -18,6 +24,7 @@ TMPFILE=$(mktemp /tmp/signal-cli-XXXXXX.tar.gz)
 
 echo "Downloading signal-cli v${VERSION} (native Linux)..."
 curl -fSL "$URL" -o "$TMPFILE"
+echo "${SHA256}  ${TMPFILE}" | sha256sum -c - || { rm -f "$TMPFILE"; echo "Checksum mismatch; not installing." >&2; exit 1; }
 
 # Install
 echo "Installing to ${BIN_DIR}/signal-cli..."

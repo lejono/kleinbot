@@ -1,129 +1,113 @@
 #!/bin/bash
-# The single entry point launchd uses for every kleinbot daemon on macOS.
-#
-#   run-daemon.sh signal-cli | kleinbot-signal | kleinbot-whatsapp
-#
-# Why a wrapper at all: plists in /Library/LaunchDaemons are world-readable, so
-# the Claude OAuth token, the Signal numbers and the Moltbook key cannot be put
-# in <EnvironmentVariables>. They live in two mode-600 files owned by kleinbot
-# and are sourced here, after launchd has already dropped to the bot account.
+# launchd executes this wrapper as the bot account, in the checkout directory.
 set -euo pipefail
 
-RUNTIME=${KLEINBOT_RUNTIME_DIR:-/Users/kleinbot/team/kleinbot}
-
-# launchd's job_postfork_become_user() should set HOME from the passwd record,
-# but nothing here depends on whether it does so before or after applying
-# <EnvironmentVariables>. Cheap insurance for ~/.claude, the npm cache and
-# signal-cli's data dir.
+# The roam daemon runs in its own isolated account: it must be told its HOME
+# and runtime dir explicitly and never fall back to the chat account's paths.
+if [ "${1:-}" = kleinbot-roam ]; then
+  if [ -z "${HOME:-}" ] || [ -z "${KLEINBOT_RUNTIME_DIR:-}" ]; then
+    echo "kleinbot-roam requires explicit HOME and KLEINBOT_RUNTIME_DIR" >&2
+    exit 78
+  fi
+fi
 export HOME="${HOME:-/Users/kleinbot}"
+runtime=${KLEINBOT_RUNTIME_DIR:-$HOME/team/kleinbot}
+export KLEINBOT_RUNTIME_DIR="$runtime"
+default_checkout=$PWD
+default_signal_cli=/opt/homebrew/bin/signal-cli
 
-# daemon.env — machine secrets (CLAUDE_CODE_OAUTH_TOKEN), written by
-#              ops/mac/set-claude-token.sh in the team monorepo.
-# .env       — kleinbot's own runtime config; src/config.ts reads this file
-#              directly too, but signal-cli needs SIGNAL_ACCOUNT in the
-#              environment, so it is exported here as well.
-#
-# Loaded by hand rather than with `set -a; . file`, for three reasons:
-#
-#  1. Precedence. A shell assignment is unconditional, so sourcing would let
-#     .env override the plist's <EnvironmentVariables> — the opposite of the
-#     systemd behaviour this is ported from, where dotenv leaves an
-#     already-set process.env alone and Environment= in the unit wins. A
-#     live .env may carry PROCESS_INTERVAL=60000, which would silently undo the
-#     per-transport 5000/600000 the plists exist to set, and a .env migrated
-#     from Linux could carry a SIGNAL_SOCKET_PATH that cannot exist on macOS.
-#     Here a variable already present in the environment is never touched.
-#  2. Literal values. `.` evaluates the right-hand side, so a secret
-#     containing $(...) or backticks is silently mangled (or executed).
-#     Values here are taken exactly as written, with at most one layer of
-#     surrounding quotes stripped.
-#  3. Loud failure. `.` on a line like `BOT_NAME=Klein Bot` dies with
-#     "Bot: command not found" and launchd crash-loops on it forever. A line
-#     that is not a plain KEY=VALUE aborts with the file and line number.
+# Keep this parser and command dispatcher identical on Linux and macOS.
+# Parse into data only: no env-file key is assigned in this shell.
+env_pairs=()
 load_env_file() {
-  local file=$1 lineno=0 line key value
+  local file=$1 lineno=0 line key value pair duplicate
   while IFS= read -r line || [ -n "$line" ]; do
     lineno=$((lineno + 1))
+    line=${line%$'\r'}
     case "$line" in
       ''|'#'*) continue ;;
-    esac
-    # Tolerate `export KEY=VALUE`, which people write out of habit.
-    case "$line" in
       'export '*) line=${line#export } ;;
     esac
-    if ! printf '%s' "$line" | grep -Eq '^[A-Za-z_][A-Za-z0-9_]*='; then
-      echo "$(basename "$0"): $file line $lineno is not KEY=VALUE — refusing to start" >&2
-      echo "  (comments start with #; do not quote the key; no spaces around =)" >&2
-      exit 78   # EX_CONFIG
+    if [[ ! "$line" =~ ^[A-Z][A-Z0-9_]*= ]]; then
+      echo "$(basename "$0"): $file line $lineno is not KEY=VALUE (uppercase keys required) — refusing to start" >&2
+      exit 78
     fi
     key=${line%%=*}
     value=${line#*=}
-    # Strip one layer of matching surrounding quotes; everything else is
-    # literal — no expansion, no command substitution.
+    case "$key" in
+      PATH|LD_PRELOAD|LD_LIBRARY_PATH|BASH_ENV|ENV|IFS|HOME|SHELLOPTS|PS4|NODE_OPTIONS)
+        echo "$(basename "$0"): $file line $lineno sets a forbidden environment key — refusing to start" >&2
+        exit 78 ;;
+    esac
     case "$value" in
       \"*\") value=${value#\"}; value=${value%\"} ;;
       \'*\') value=${value#\'}; value=${value%\'} ;;
     esac
-    # Only when unset: launchd's <EnvironmentVariables> stay authoritative.
-    # printenv rather than ${!key+x} indirection — /bin/bash on macOS is 3.2,
-    # and printenv asks the question we actually mean (is it in the exported
-    # environment we are about to hand to the daemon?) with no version risk.
-    if ! printenv "$key" >/dev/null 2>&1; then
-      export "$key=$value"
-    fi
+    # The inherited environment wins, including empty values. First file and
+    # first occurrence win too, without exporting anything during parsing.
+    if printenv "$key" >/dev/null 2>&1; then continue; fi
+    duplicate=0
+    for pair in ${env_pairs[@]+"${env_pairs[@]}"}; do
+      if [ "${pair%%=*}" = "$key" ]; then duplicate=1; break; fi
+    done
+    [ "$duplicate" = 1 ] || env_pairs+=("$key=$value")
   done < "$file"
 }
 
-for f in daemon.env .env; do
-  [ -f "$RUNTIME/config/$f" ] && load_env_file "$RUNTIME/config/$f"
+for file in daemon.env .env; do
+  if [ -f "$runtime/config/$file" ]; then load_env_file "$runtime/config/$file"; fi
 done
 
+# Look up only the settings needed to build argv; other pairs go directly to
+# env at exec time. Even shell-special uppercase keys never alter this shell.
+setting() {
+  local key=$1 fallback=$2 pair
+  if printenv "$key"; then return; fi
+  for pair in ${env_pairs[@]+"${env_pairs[@]}"}; do
+    if [ "${pair%%=*}" = "$key" ]; then printf '%s\n' "${pair#*=}"; return; fi
+  done
+  printf '%s\n' "$fallback"
+}
+
+# Dry runs are opt-in through the inherited environment, never an env file.
+launch() {
+  if [ "${KLEINBOT_DRY_RUN:-}" = 1 ]; then
+    printf 'command:'
+    printf ' %q' "$@"
+    printf '\ncwd=%s\n' "$PWD"
+    env ${env_pairs[@]+"${env_pairs[@]}"}
+  else
+    exec env ${env_pairs[@]+"${env_pairs[@]}"} "$@"
+  fi
+}
+
+checkout=$(setting KLEINBOT_CHECKOUT "$default_checkout")
 case "${1:-}" in
   signal-cli)
-    : "${SIGNAL_ACCOUNT:?SIGNAL_ACCOUNT is not set in $RUNTIME/config/.env}"
-    # A SIGKILL'd or power-lost daemon leaves its unix socket behind (run/ is
-    # a plain directory, not tmpfs), and signal-cli does not unlink an
-    # existing socket before bind — it exits 3 ("Address already in use") and
-    # launchd crash-loops on it forever (verified by a repeated kill drill).
-    # launchd guarantees a single instance of this label and this job is the
-    # socket's only writer, so removing a stale *socket* here is safe. A
-    # symlink is deliberately left in place to fail loudly, not followed.
-    SOCK="$RUNTIME/run/signal.sock"
-    if [ ! -L "$SOCK" ] && [ -S "$SOCK" ]; then
-      rm -f "$SOCK"
+    account=$(setting SIGNAL_ACCOUNT '')
+    [ -n "$account" ] || { echo "SIGNAL_ACCOUNT is not set in $runtime/config/.env" >&2; exit 78; }
+    sock="$runtime/run/signal.sock"
+    # A dry run must leave even stale sockets alone.
+    if [ "${KLEINBOT_DRY_RUN:-}" != 1 ] && [ ! -L "$sock" ] && [ -S "$sock" ]; then
+      rm -f -- "$sock"
     fi
-    # The env key is SIGNAL_CLI_CONFIG_DIR, NOT SIGNAL_CLI_CONFIG: signal-cli
-    # itself reads an environment variable named SIGNAL_CLI_CONFIG and treats
-    # it as a config FILE, dying with "Failed to load config from <dir>:
-    # <dir> (Is a directory)" — established by per-variable bisection against
-    # 0.14.6. Since this wrapper exports every key in config/.env, the key
-    # name must not collide with anything signal-cli reads.
-    # --config is a GLOBAL option, so it goes before -a and the `daemon`
-    # subcommand. Set SIGNAL_CLI_CONFIG_DIR in config/.env to point at the
-    # migrated identity (Task 8 rsyncs it to /Users/kleinbot/
-    # signal-cli-data); unset, signal-cli keeps its own default
-    # ($XDG_DATA_HOME/signal-cli, else ~/.local/share/signal-cli).
-    # Written as two full command lines rather than building an args array:
-    # /bin/bash on macOS is 3.2, where expanding an empty array under `set -u`
-    # is itself an "unbound variable" error.
-    if [ -n "${SIGNAL_CLI_CONFIG_DIR:-}" ]; then
-      exec /opt/homebrew/bin/signal-cli --config "$SIGNAL_CLI_CONFIG_DIR" \
-        -a "$SIGNAL_ACCOUNT" daemon \
-        --socket "$RUNTIME/run/signal.sock" --receive-mode on-connection
+    config=$(setting SIGNAL_CLI_CONFIG_DIR '')
+    binary=$(setting SIGNAL_CLI_BIN "$default_signal_cli")
+    args=()
+    if [ -n "$config" ]; then args+=(--config "$config"); fi
+    launch "$binary" ${args[@]+"${args[@]}"} -a "$account" daemon --socket "$sock" --receive-mode on-connection
+    ;;
+  kleinbot-signal|kleinbot-whatsapp|kleinbot-roam)
+    cd "$checkout"
+    tsx="$checkout/node_modules/.bin/tsx"
+    if [ "${KLEINBOT_DRY_RUN:-}" != 1 ] && [ ! -x "$tsx" ]; then
+      echo "Missing executable $tsx; run npm ci (including dev dependencies) as the bot user" >&2
+      exit 78
     fi
-    exec /opt/homebrew/bin/signal-cli -a "$SIGNAL_ACCOUNT" daemon \
-      --socket "$RUNTIME/run/signal.sock" --receive-mode on-connection
-    ;;
-  # WorkingDirectory (the repo checkout) is set by the plist, so the entry
-  # points stay relative and the wrapper never hardcodes the checkout path.
-  kleinbot-signal)
-    exec /opt/homebrew/bin/npx tsx src/index-signal.ts
-    ;;
-  kleinbot-whatsapp)
-    exec /opt/homebrew/bin/npx tsx src/index-whatsapp.ts
+    launch "$tsx" "src/index-${1#kleinbot-}.ts"
     ;;
   *)
-    echo "usage: $(basename "$0") signal-cli|kleinbot-signal|kleinbot-whatsapp" >&2
+    echo "usage: $(basename "$0") signal-cli|kleinbot-signal|kleinbot-whatsapp|kleinbot-roam" >&2
     exit 64
     ;;
 esac

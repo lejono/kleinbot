@@ -96,6 +96,7 @@ export interface BriefingResponse {
 export interface MoltbookState {
   seenPostIds: string[];
   lastCycleTimestamp: number;
+  lastCycleAttemptAt: number;
   crossPollinationQueue: MoltbookCrossPollination[];
   // Rate limit tracking
   lastPostTimestamp: number;

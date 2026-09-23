@@ -227,8 +227,8 @@ export async function relayFlag(
 
 const MAX_FLAG_BYTES = 16 * 1024;
 const MAX_TEXT_CHARS = 4000;
-const MAX_AGE_MS = 48 * 3600_000;
-const MAX_FUTURE_MS = 5 * 60_000;
+export const MAX_AGE_MS = 48 * 3600_000;
+export const MAX_FUTURE_MS = 5 * 60_000;
 const MAX_SEEN_IDS = 500;
 
 // True when a file's on-disk size alone already exceeds the flag size cap.
@@ -256,7 +256,7 @@ export type FlagRead = { ok: true; content: string } | { ok: false; reason: stri
 export function readFlagFile(filePath: string): FlagRead {
   let fd: number;
   try {
-    fd = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    fd = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
   } catch (err: any) {
     if (err?.code === "ENOENT") throw err; // already processed — caller's ENOENT path
     return { ok: false, reason: "unreadable or symlink" };

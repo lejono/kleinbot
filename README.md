@@ -33,7 +33,7 @@ All transports implement a common `Transport` interface (`src/transport.ts`), so
 
 ## Prerequisites
 
-- Node.js 18+
+- Node.js 20.3+ (22+ for the tests)
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI installed and authenticated
 - A separate account for the bot on your chosen platform
 
@@ -127,6 +127,12 @@ On first run, a QR code appears in the terminal. Scan it with WhatsApp on the bo
 Important: Baileys companion devices only receive real-time messages. The bot must stay running or it misses messages.
 
 ## Systemd services
+
+**For a production host, use the dedicated-account install instead:** the bot
+runs as its own non-admin account under system services, with a checked
+installer and a step-by-step checklist. Linux: [scripts/linux/README.md](scripts/linux/README.md).
+macOS (LaunchDaemons): `scripts/macos/`. The user services below suit a
+personal machine.
 
 For always-on operation, create systemd user services (no root required):
 
@@ -232,6 +238,15 @@ SIGNAL_SOCKET_PATH=            # override signal-cli socket path
 # Optional
 MOLTBOOK_API_KEY=              # Moltbook social platform integration
 ```
+
+### Roam outbox
+
+The chat-side roam relay uses `ROAM_OUTBOX_DIR`, with built-in recipients pinned
+by `ROAM_BRIEFING_CHAT_JID` and `ROAM_RESEARCH_CHAT_JID`. Optional
+`ROAM_OUTBOX_EXTRA_CHANNELS=updates=example-group-id` adds up to eight channels;
+see [the outbox configuration](docs/roam-outbox.md) for validation and limits.
+The folder chooses the audience, and recipient fields inside flags are ignored.
+Only the host environment chooses each folder's recipient.
 
 ## File structure
 

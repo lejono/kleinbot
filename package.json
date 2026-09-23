@@ -11,6 +11,7 @@
     "start:slack": "npx tsx src/index-slack.ts",
     "start:discord": "npx tsx src/index-discord.ts",
     "start:signal": "npx tsx src/index-signal.ts",
+    "roam": "tsx src/index-roam.ts",
     "test": "node --import tsx --test \"test/**/*.test.ts\"",
     "setup": "bash scripts/setup.sh"
   },

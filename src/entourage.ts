@@ -5,59 +5,128 @@ import fs from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
 import { config } from "./config.js";
+import { sanitizeFilename } from "./filename.js";
 import type { ChatMessage } from "./types.js";
 
 const FLAGS_DIR = process.env.ENTOURAGE_FLAGS_DIR
   || path.join(process.env.XDG_RUNTIME_DIR || `/run/user/${process.getuid!()}`, "entourage", "flags");
 const INCOMING_DIR = path.join(FLAGS_DIR, "incoming");
+const ATTACH_DIR = path.join(FLAGS_DIR, "attachments");
 
-const EXPENSE_KEYWORDS = /\b(expense|receipt|claim|reimburse|reimbursement)\b/i;
-
-// Receipts arrive as images OR PDFs — invoices/receipts are frequently PDF.
-function isReceiptAttachment(a: { contentType: string }): boolean {
-  return a.contentType.startsWith("image/") || a.contentType === "application/pdf";
-}
-
-export function isExpenseReceipt(msg: ChatMessage): boolean {
-  if (!msg.attachments?.length) return false;
-
-  const hasReceipt = msg.attachments.some(isReceiptAttachment);
-  if (!hasReceipt) return false;
-
-  // Explicit expense keywords in the message
-  if (EXPENSE_KEYWORDS.test(msg.text)) return true;
-
-  // DM from admin with a receipt (image/PDF) and short/no text — assume expense receipt
-  const adminJid = process.env.SIGNAL_ADMIN_NUMBER || config.adminJid;
-  if (msg.senderJid === adminJid && msg.chatJid === adminJid && msg.text.length < 100) {
-    return true;
+// Messenger clients (signal-cli etc.) prune their attachment stores on their
+// own schedule, so a flag that points into one can outlive its file. Copy each
+// attachment into the flag dir's own attachments/ store at flag time and point
+// the flag at the copy. Copy failures must prevent the flag from being written.
+async function persistAttachment(localPath: string, flagId: string, index: number): Promise<string> {
+  await fs.promises.mkdir(ATTACH_DIR, { recursive: true });
+  const dest = path.join(ATTACH_DIR, `${flagId}-${index}-${path.basename(localPath)}`);
+  // Exclusive creation never follows an entry planted at dest, and the group change goes
+  // through the open descriptor: members of a shared group can rename entries in the
+  // directory, so the pathname is never trusted after creation.
+  const out = await fs.promises.open(dest, "wx", 0o660);
+  try {
+    // writeFile writes each chunk in full (a bare write may return short).
+    for await (const chunk of fs.createReadStream(localPath)) await out.writeFile(chunk);
+    await inheritDirectoryGroup(out);
+    await out.close();
+  } catch (err) {
+    await out.close().catch(() => {});
+    await fs.promises.unlink(dest).catch(() => {});
+    throw err;
   }
-
-  return false;
+  return dest;
 }
 
-export async function writeExpenseFlag(msg: ChatMessage): Promise<void> {
+// A file created in a setgid directory normally takes the directory's group; apply it
+// explicitly, since a shared flags tree relies on it for the consumer account to read.
+async function inheritDirectoryGroup(file: fs.promises.FileHandle): Promise<void> {
+  if (process.platform === "win32") return;
+  const dir = await fs.promises.stat(ATTACH_DIR);
+  if (!(dir.mode & 0o2000)) return;
+  const copy = await file.stat();
+  if (copy.gid !== dir.gid) await file.chown(copy.uid, dir.gid);
+}
+
+export function isDocumentAttachment(a: { contentType: string }): boolean {
+  return !a.contentType.startsWith("audio/");
+}
+
+export function isAdminChannel(msg: ChatMessage): boolean {
+  const adminJid = process.env.SIGNAL_ADMIN_NUMBER || config.adminJid;
+  const adminGroupJid = process.env.SIGNAL_ADMIN_GROUP_JID || config?.adminGroupJid;
+  return msg.senderJid === adminJid
+    && (msg.chatJid === adminJid || (!!adminGroupJid && msg.chatJid === adminGroupJid));
+}
+
+export function isDocument(msg: ChatMessage): boolean {
+  if (!isAdminChannel(msg)) return false;
+  if (!msg.attachments?.length) return false;
+  return msg.attachments.some(isDocumentAttachment);
+}
+
+export function documentAck(msg: ChatMessage): string {
+  const files = (msg.attachments || []).filter(isDocumentAttachment);
+  if (files.length !== 1) return `Got ${files.length} files, filing them.`;
+  const file = files[0];
+  const name = sanitizeFilename(file.filename ?? "")
+    || (file.contentType.startsWith("image/") ? "an image"
+      : file.contentType === "application/pdf" ? "a PDF" : "a file");
+  return `Got ${name}, filing it.`;
+}
+
+export async function writeDocumentFlag(msg: ChatMessage): Promise<void> {
+  const flagId = randomUUID();
+  const attachments = [];
+  try {
+    for (const [index, a] of (msg.attachments || []).filter(isDocumentAttachment).entries()) {
+      attachments.push({
+        path: await persistAttachment(a.localPath, flagId, index + 1),
+        contentType: a.contentType,
+        filename: a.filename,
+        size: a.size,
+      });
+    }
+  } catch (err) {
+    await Promise.allSettled(attachments.map(a => fs.promises.unlink(a.path)));
+    throw err;
+  }
   const flag = {
-    id: randomUUID(),
-    type: "expense",
+    id: flagId,
+    type: "document",
     timestamp: Date.now(),
     source: "kleinbot",
     sender: msg.sender,
     senderJid: msg.senderJid,
     chatJid: msg.chatJid,
     text: msg.text || "",
-    attachments: (msg.attachments || [])
-      .filter(isReceiptAttachment)
-      .map(a => ({
-        path: a.localPath,
-        contentType: a.contentType,
-        filename: a.filename,
-        size: a.size,
-      })),
+    attachments,
   };
 
   await writeFlag(INCOMING_DIR, flag);
-  console.log(`[entourage] Wrote expense flag ${flag.id.slice(0, 8)} for receipt from ${msg.sender}`);
+  console.log(`[entourage] Wrote document flag ${flag.id.slice(0, 8)} from ${msg.sender}`);
+}
+
+export async function handleDocument(
+  msg: ChatMessage,
+  sendText: (chatJid: string, text: string) => Promise<unknown>,
+): Promise<void> {
+  try {
+    await writeDocumentFlag(msg);
+  } catch (err) {
+    console.error(`[entourage] Failed to write document flag:`, err);
+    try {
+      await sendText(msg.chatJid, "Got your file but could not file it; please resend.");
+    } catch (sendErr) {
+      console.error(`[entourage] Failed to send document failure notice:`, sendErr);
+    }
+    return;
+  }
+
+  try {
+    await sendText(msg.chatJid, documentAck(msg));
+  } catch (err) {
+    console.error(`[entourage] Failed to send document acknowledgement:`, err);
+  }
 }
 
 // Editor agent: detect /revise commands from the admin in the configured editor group.
@@ -86,10 +155,10 @@ export async function writeEditorFlag(msg: ChatMessage): Promise<void> {
   console.log(`[entourage] Wrote editor flag ${flag.id.slice(0, 8)} for "${msg.text}" from ${msg.sender}`);
 }
 
-// Voice notes from admin DM — always flag for EA
+// Voice notes from the admin — preserve flagging in all chats.
 export function isVoiceNote(msg: ChatMessage): boolean {
   const adminJid = process.env.SIGNAL_ADMIN_NUMBER || config.adminJid;
-  if (msg.senderJid !== adminJid) return false;
+  if (!isAdminChannel(msg) && msg.senderJid !== adminJid) return false;
   if (!msg.attachments?.length) return false;
   return msg.attachments.some(a =>
     a.contentType.startsWith("audio/"),

@@ -17,7 +17,7 @@ const PHONE_ALLOWLIST = new Set(["+447123456789", "+447987654321"]);
 
 // .plist: launchd daemon definitions are installed world-readable, so a phone
 // number leaking into one is worse than in ordinary source.
-const TEXT_EXT = new Set([".ts", ".js", ".md", ".json", ".yaml", ".yml", ".sh", ".plist"]);
+const TEXT_EXT = new Set([".ts", ".js", ".md", ".json", ".yaml", ".yml", ".sh", ".plist", ".service"]);
 const SKIP = new Set(["package-lock.json", "no-pii.test.ts"]);
 
 function tracked(predicate: (f: string) => boolean): string[] {

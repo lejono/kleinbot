@@ -1,0 +1,34 @@
+[Unit]
+Description=Kleinbot signal-cli daemon
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=@BOT_USER@
+Group=@BOT_GROUP@
+WorkingDirectory=@CHECKOUT@
+ExecStart=@WRAPPER_DIR@/run-daemon.sh signal-cli
+# SIGTERM/SIGINT handlers exit 0; retry successful exits too. Use systemctl stop
+# for maintenance: an explicit stop suppresses automatic restarts.
+Restart=always
+RestartSec=30
+Environment="KLEINBOT_RUNTIME_DIR=@RUNTIME@"
+Environment="KLEINBOT_CHECKOUT=@CHECKOUT@"
+# The wrapper prepends HOME/.local/bin for custom runtime layouts as well.
+Environment="PATH=@BOT_HOME@/.local/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="SIGNAL_SOCKET_PATH=@RUNTIME@/run/signal.sock"
+Environment="NODE_ENV=production"
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+UMask=0007
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,14 @@
+[Unit]
+Description=Exchange the roam inbox and outbox
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+# Render this placeholder from COMMS_ACCOUNT before installing.
+User=@COMMS_ACCOUNT@
+ExecStart=/usr/local/lib/kleinbot-pipe/pipe-sync.sh /etc/kleinbot-pipe.conf
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+TimeoutStartSec=180

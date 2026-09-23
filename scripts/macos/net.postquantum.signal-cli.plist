@@ -22,7 +22,12 @@
     <key>KLEINBOT_RUNTIME_DIR</key><string>/Users/kleinbot/team/kleinbot</string>
   </dict>
   <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <!-- Unconditional: the daemons' SIGTERM/SIGINT handlers exit 0, and with
+       SuccessfulExit=false launchd read that as "stopped on purpose" and left
+       the service down after a stray SIGTERM until someone kickstarted it as
+       root. Any exit now relaunches after ThrottleInterval; to stop a daemon
+       for maintenance, `launchctl bootout` it. -->
+  <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>30</integer>
   <key>StandardOutPath</key><string>/Users/kleinbot/team/kleinbot/logs/signal-cli.log</string>
   <key>StandardErrorPath</key><string>/Users/kleinbot/team/kleinbot/logs/signal-cli.err.log</string>

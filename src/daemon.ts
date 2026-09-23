@@ -1,14 +1,18 @@
 import { config, dataDir } from "./config.js";
 import { loadState, saveState, isProcessed, markProcessed, allowDm, requiresApproval } from "./state.js";
 import { askClaude, getChatConfig, ensureChatConfig, isKnownChat, saveNotes, readNotes } from "./ai.js";
-import { loadPending, savePending } from "./pending.js";
+import { loadPending, savePending as persistPending } from "./pending.js";
 import type { ChatMessage, ClaudeResponse, CalendarEvent } from "./types.js";
 import type { Transport } from "./transport.js";
+import { isMoltbookEnabled } from "./moltbook/enabled.js";
 import { runMorningBriefing } from "./moltbook/cycle.js";
 import { handleMoltbookAction, sendBriefing } from "./moltbook/transport-bridge.js";
 import { loadMoltbookState, hasRunToday } from "./moltbook/state.js";
 import { logActivity } from "./activity.js";
-import { isExpenseReceipt, writeExpenseFlag, isEditorCommand, writeEditorFlag, isVoiceNote, writeVoiceNoteFlag, collectSheetActions, writeSheetEditFlag } from "./entourage.js";
+import { isDocument, handleDocument, isEditorCommand, writeEditorFlag, isVoiceNote, writeVoiceNoteFlag, collectSheetActions, writeSheetEditFlag } from "./entourage.js";
+import { shouldPipeMessage } from "./roam/inbox.js";
+import { createInboxPipe } from "./roam/pipe.js";
+import { startOutboxRelay } from "./roam/outbox-relay.js";
 import { startEntourageWatcher } from "./entourage-watcher.js";
 import { appendRawMessage } from "./raw-capture.js";
 
@@ -32,6 +36,10 @@ export async function startDaemon(options: DaemonOptions): Promise<void> {
 
   const state = loadState();
   const pendingByChat = loadPending();
+  const pipe = createInboxPipe(pendingByChat, msg => markProcessed(state, msg));
+  // Every persistence path includes retries, while processing only sees the chat queue.
+  const savePending = (_queue: Map<string, ChatMessage[]>) => persistPending(pipe.persisted());
+  state.messageHistory = state.messageHistory.filter(msg => !shouldPipeMessage(msg.chatJid));
 
   // Track IDs currently in pending queues to avoid duplicates from repeated events
   const pendingIds = new Set<string>();
@@ -246,12 +254,18 @@ export async function startDaemon(options: DaemonOptions): Promise<void> {
         console.error(`[raw-capture] Failed to append raw message:`, err),
       );
 
-      // Entourage: detect expense receipts and flag for orchestrator
-      if (isExpenseReceipt(msg)) {
-        writeExpenseFlag(msg).catch(err =>
-          console.error(`[entourage] Failed to write expense flag:`, err),
+      if (pipe.route(msg)) {
+        state.messageHistory = state.messageHistory.filter(m => m.id !== msg.id);
+        savePending(pendingByChat);
+        saveState(state);
+        continue;
+      }
+
+      // Entourage: flag non-audio files from the admin DM for the orchestrator
+      if (isDocument(msg)) {
+        handleDocument(msg, (chatJid, text) => transport.sendText(chatJid, text)).catch(err =>
+          console.error(`[entourage] Failed to handle document:`, err),
         );
-        transport.sendText(msg.chatJid, "Got your receipt, processing...").catch(() => {});
       }
 
       // Entourage: detect /revise commands for the editor agent
@@ -382,7 +396,7 @@ export async function startDaemon(options: DaemonOptions): Promise<void> {
         }
 
         // Handle Moltbook actions
-        if (decision.moltbookAction) {
+        if (isMoltbookEnabled(config.moltbookApiKey, enableMoltbook) && decision.moltbookAction) {
           console.log(`[moltbook] Action: ${decision.moltbookAction.type}`);
           try {
             const moltbookResult = await handleMoltbookAction(decision.moltbookAction);
@@ -446,7 +460,7 @@ export async function startDaemon(options: DaemonOptions): Promise<void> {
   }
   console.log(`Pending messages restored: ${pendingIds.size}`);
 
-  const moltbookEnabled = enableMoltbook && !!config.moltbookApiKey;
+  const moltbookEnabled = isMoltbookEnabled(config.moltbookApiKey, enableMoltbook);
   if (moltbookEnabled) {
     console.log("Moltbook enabled — morning briefing at 05:30 UK time");
   }
@@ -455,6 +469,7 @@ export async function startDaemon(options: DaemonOptions): Promise<void> {
 
   // Start entourage outgoing flag watcher (relays orchestrator replies to transport)
   const entourageWatcher = startEntourageWatcher(transport);
+  const outboxRelay = startOutboxRelay(transport);
 
   // Periodically process accumulated messages
   setInterval(processPending, PROCESS_INTERVAL);
@@ -496,6 +511,7 @@ export async function startDaemon(options: DaemonOptions): Promise<void> {
   process.on("SIGINT", () => {
     console.log("\nShutting down...");
     entourageWatcher.stop();
+    outboxRelay.stop();
     saveState(state);
     savePending(pendingByChat);
     transport.shutdown();
@@ -505,6 +521,7 @@ export async function startDaemon(options: DaemonOptions): Promise<void> {
   process.on("SIGTERM", () => {
     console.log("Received SIGTERM, shutting down...");
     entourageWatcher.stop();
+    outboxRelay.stop();
     saveState(state);
     savePending(pendingByChat);
     transport.shutdown();

@@ -1,0 +1,11 @@
+[Unit]
+Description=Exchange the roam pipe every minute
+
+[Timer]
+OnBootSec=60
+OnUnitActiveSec=60
+AccuracySec=1
+Unit=kleinbot-pipe-sync.service
+
+[Install]
+WantedBy=timers.target

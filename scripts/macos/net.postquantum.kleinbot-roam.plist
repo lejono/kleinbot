@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Separate service account and runtime; credentials belong in private config files. -->
+<plist version="1.0"><dict>
+  <key>Label</key><string>net.postquantum.kleinbot-roam</string>
+  <key>UserName</key><string>kleinbot-roam</string>
+  <key>GroupName</key><string>staff</string>
+  <key>WorkingDirectory</key><string>/Users/kleinbot-roam/src/team/kleinbot</string>
+  <key>ProgramArguments</key><array>
+    <string>/Users/kleinbot-roam/team/kleinbot/bin/run-daemon.sh</string>
+    <string>kleinbot-roam</string>
+  </array>
+  <key>EnvironmentVariables</key><dict>
+    <key>HOME</key><string>/Users/kleinbot-roam</string>
+    <key>PATH</key><string>/Users/kleinbot-roam/.local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    <key>KLEINBOT_RUNTIME_DIR</key><string>/Users/kleinbot-roam/team/kleinbot</string>
+    <key>NODE_ENV</key><string>production</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>30</integer>
+  <key>StandardOutPath</key><string>/Users/kleinbot-roam/team/kleinbot/logs/kleinbot-roam.log</string>
+  <key>StandardErrorPath</key><string>/Users/kleinbot-roam/team/kleinbot/logs/kleinbot-roam.err.log</string>
+</dict></plist>

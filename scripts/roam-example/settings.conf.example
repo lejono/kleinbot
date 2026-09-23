@@ -1,0 +1,18 @@
+# Copy outside the checkout. Literal KEY=value only: no quotes or expansion.
+# These names and paths are invented examples; set every value for your hosts.
+ROAM_HOST=roam.example.net
+ROAM_ACCOUNT=kbroam
+COMMS_ACCOUNT=kbcomms
+ROAM_HOME=/Users/kbroam
+ROAM_RUNTIME=/Users/kbroam/runtime
+# Remote rrsync restriction root; must be outside ROAM_RUNTIME.
+PIPE_DIR=/Users/kbroam/pipe
+# Local Linux paths. Keep credentials and lock outside the transferred tree.
+COMMS_PIPE_DIR=/var/lib/kbcomms/pipe
+PIPE_KEY=/var/lib/kbcomms/ssh/pipe_ed25519
+PIPE_KNOWN_HOSTS=/var/lib/kbcomms/ssh/known_hosts
+PIPE_LOCK=/var/lib/kbcomms/run/pipe.lock
+# macOS installer only: the Homebrew rsync 3.x executable on the roam machine.
+# The Linux exchange ignores it (it uses rsync from PATH; the far end's rsync is
+# chosen by the patched rrsync), but the shared settings loader expects a value.
+RSYNC_BIN=/opt/homebrew/bin/rsync

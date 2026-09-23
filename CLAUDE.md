@@ -71,7 +71,7 @@ index.ts → startConnection(Baileys) → stays connected, receives messages in 
               send queued Moltbook cross-pollination digests to moltbook-enabled chats
 
 index.ts → checkMorningBriefing() → every process tick, if past 05:30 UK and not run today:
-              runMorningBriefing() → claude --print (opus + WebSearch/WebFetch)
+              runMorningBriefing() → configured briefing model (Claude web tools enabled)
               reads Moltbook feed (non-fatal) + web searches for AI news
                                             ↓
               sends conversational briefing to moltbook-enabled WhatsApp chats
@@ -97,10 +97,24 @@ Baileys as a linked/companion device does NOT receive offline messages — it on
 - `src/types.ts` — Shared TypeScript interfaces (`ChatMessage`, `ChatConfig`, `ChatsConfig`, etc.)
 - `src/qrcode-terminal.d.ts` — Type declaration for qrcode-terminal
 - `src/moltbook/client.ts` — HTTP wrapper for Moltbook API (feed, posts, comments, voting, search). Uses Node's built-in `fetch`.
-- `src/moltbook/cycle.ts` — Autonomous participation: fetch feed → Claude picks actions → execute (two-phase commenting). Also `runMorningBriefing()` for daily AI news digest.
-- `src/moltbook/state.ts` — Moltbook state: seen posts, rate limit tracking, cross-pollination queue
+- `src/moltbook/cycle.ts` — Autonomous participation: fetch feed → configured model picks actions → execute (two-phase commenting). Also `runMorningBriefing()` for daily AI news digest.
+- `src/moltbook/model-call.ts` — Claude/Codex CLI invocation, timeouts and temporary workspace cleanup.
+- `src/moltbook/enabled.ts` — Shared API-key gate for chat action dispatch and briefing scheduling.
+- `src/index-roam.ts` — Transport-free daemon: serial inbox answers, participation, briefing and research jobs.
+- `src/roam/inbox.ts` — Chat pipe decision, atomic metadata-only inbox writer and oldest-first reader.
+- `src/roam/outbox-relay.ts` — Chat-side channel relay with pinned recipients and strict markdown attachment checks.
+- `src/roam/answer.ts`, `src/roam/control.ts` — Research answers, persistent inbox deduplication and trusted participation controls.
+- `src/roam/outbox.ts` — Atomic recipient-free message flags and copied markdown attachments.
+- `src/roam/schedule.ts` — Persistent once-per-UK-day research attempt tracking.
+- `src/research/corpus.ts` — Private monthly JSONL capture of full posts and flattened comments.
+- `src/research/classify.ts` — Bounded open-coding batches with strict result validation and retry on later runs.
+- `src/research/schema.ts` — Classification schema and validation, including verbatim quote checks.
+- `src/research/summary.ts` — Deterministic markdown totals, codes, projects, mechanisms, allocations and sanitised quotes.
+- `scripts/research.ts` — Manual research entrypoint.
+- `scripts/macos/net.postquantum.kleinbot-roam.plist` — Isolated launchd service template.
+- `src/moltbook/state.ts` — Moltbook state: seen posts, rate limits, cross-pollination queue, cycle attempts and morning briefing attempts
 - `src/moltbook/types.ts` — Moltbook-specific interfaces
-- `src/moltbook/whatsapp-bridge.ts` — Handles WhatsApp-triggered Moltbook commands; sends cross-pollination digests to moltbook-enabled chats
+- `src/moltbook/transport-bridge.ts` — Handles chat-triggered Moltbook commands and sends briefings and cross-pollination digests
 - `src/signal.ts` — Signal transport: `SignalRpcClient` (Unix socket JSON-RPC to signal-cli daemon), `createSignalTransport()` factory. No npm deps (uses Node `net` module).
 - `src/index-signal.ts` — Signal entry point (same pattern as index-discord.ts)
 - `prompts/chats.json` — Per-chat config for WhatsApp: maps JIDs to prompt files and model names
@@ -126,8 +140,42 @@ Baileys as a linked/companion device does NOT receive offline messages — it on
 - `HISTORY_WINDOW` — Rolling message context size (default: 50)
 - `LOG_LEVEL` — Pino log level for Baileys (default: "warn", use "debug" for troubleshooting)
 - `MOLTBOOK_API_KEY` — Moltbook API key (get from `npx tsx scripts/moltbook-register.ts`). If unset, Moltbook features are disabled. Morning briefing runs daily at 05:30 UK time.
+- `CLAUDE_BIN`, `CODEX_BIN` — Model CLI executables; defaults are `claude` and `codex`.
+- `CODEX_DISABLE_FEATURES` — Comma-separated features disabled per Codex call with `--disable`; defaults to `browser_use,browser_use_external,browser_use_full_cdp_access,computer_use,in_app_browser`. An empty value disables nothing.
+- `MOLTBOOK_BACKEND`, `MOLTBOOK_MODEL` — Participation backend/model (defaults: `claude`, `sonnet`).
+- `BRIEFING_BACKEND`, `BRIEFING_MODEL` — Briefing backend/model (defaults: `claude`, `opus`).
+- `MOLTBOOK_MODEL_TIMEOUT_MS`, `MOLTBOOK_COMMENT_TIMEOUT_MS`, `BRIEFING_MODEL_TIMEOUT_MS` — CLI timeouts (300000, 120000, 300000 ms).
+- `MOLTBOOK_HEARTBEAT_INTERVAL` — Roam participation attempt interval (14400000 ms).
+- `ROAM_TICK_INTERVAL` — Roam due-check interval (60000 ms).
+- `ROAM_INBOX_DIR`, `ROAM_PIPE_CHAT_JID` — Chat-side pipe requires both; unset disables it. Roam reads the inbox directory without a chat id.
+- `ROAM_INBOX_GROUP_READABLE` — Set to `1` for inbox 0770 and files 0640; default 0700/0600, explicitly applied.
+- `ROAM_INBOX_MAX_TEXT_CHARS` — Inbox text cap (4000), after stripping control characters.
+- `ROAM_INBOX_MAX_PER_TICK`, `ROAM_INBOX_SEEN_LIMIT` — Answers per tick (5) and retained handled ids (500, may be lowered).
+- `ROAM_CHAT_BACKEND`, `ROAM_CHAT_MODEL`, `ROAM_CHAT_TIMEOUT_MS` — Inbox model settings (claude, sonnet, 300000 ms).
+- `ROAM_CHAT_CONTEXT_MESSAGES`, `ROAM_CHAT_CONTEXT_MAX_BYTES` — Recent conversation entries (20) and maximum log tail read (262144 bytes).
+- `ROAM_INTENT_MODEL`, `ROAM_INTENT_TIMEOUT_MS`, `ROAM_INTENT_MIN_CONFIDENCE` — Tool-less Claude intent model (haiku), timeout (60000 ms), and minimum confidence (0.7).
+- `ROAM_CONTROL_MAX_DIRECTIVE_CHARS` — Trusted guidance cap (2000, may be lowered).
+- `ROAM_OUTBOX_DIR` — Outbox root; unset disables writing and logs text length only.
+- `ROAM_BRIEFING_CHAT_JID`, `ROAM_RESEARCH_CHAT_JID` — Pinned chat-side relay recipients; unset channels are not swept.
+- `ROAM_OUTBOX_EXTRA_CHANNELS` — Optional comma-separated `name=chatId` pairs, e.g. `updates=example-group-id`, for up to eight additional pinned channels; see the relay contract below.
+- `ROAM_OUTBOX_RELAY_INTERVAL` — Chat-side channel sweep interval (5000 ms).
+- `ROAM_OUTBOX_GROUP_READABLE` — Set to `1` for channel directories 0770 and flag/attachment files 0640, explicitly applied despite umask; off by default (0700/0600).
+- `ROAM_OUTBOX_MAX_MD_BYTES` — Markdown attachment size limit (262144 bytes).
+- `ROAM_OUTBOX_MAX_TEXT_CHARS`, `ROAM_OUTBOX_MAX_FLAG_BYTES` — May lower the receiver's 4000-character and 16384-byte ceilings.
+- `RESEARCH_CAPTURE` — Set to `1` to capture full fetched posts and comments; off by default.
+- `RESEARCH_MAX_COMMENT_FETCH` — Maximum comment trees per cycle (20), highest comment count first among newly captured posts.
+- `RESEARCH_HOUR_UK` — Daily research attempt hour in Europe/London (3).
+- `RESEARCH_BACKEND`, `RESEARCH_MODEL` — Research backend (default `codex`) and required model (no default). An unset model skips classification and summary generation.
+- `RESEARCH_BATCH_SIZE`, `RESEARCH_MAX_BATCHES` — Posts per batch and batches per run (20 and 10).
+- `RESEARCH_MAX_POST_CHARS`, `RESEARCH_MODEL_TIMEOUT_MS` — Per-post prompt content cap (2000 characters) and model timeout (300000 ms).
+- `prompts/research-question.md` (runtime prompts dir, optional) — The operator's research question, given to the classifier as trusted guidance ahead of the untrusted posts, capped by `RESEARCH_MAX_QUESTION_CHARS` (2000). Absent, the classifier does neutral open coding. It is user data and never belongs in this repo.
+- `RESEARCH_MAX_QUOTE_CHARS`, `RESEARCH_MAX_CODE_CHARS` — Quote and open-code length limits (200 and 64 characters); quotes cannot exceed 200 characters.
+- `RESEARCH_SUMMARY_MAX_CODES`, `RESEARCH_SUMMARY_MAX_QUOTES` — Summary display limits (40 and 30).
+- `KLEINBOT_RUNTIME_DIR` — Base for data, prompts, configuration and the research wiki. All roam settings above are read through `src/config.ts`; see `.env.example` for examples.
+- `KLEINBOT_TEMP_DIR` — Temporary root for model workspaces and schemas (default: OS temporary directory).
 - `SIGNAL_ACCOUNT` — Bot's registered Signal phone number (e.g. `+447123456789`)
 - `SIGNAL_ADMIN_NUMBER` — Admin's phone number for `/commands` (optional)
+- `SIGNAL_ADMIN_GROUP_JID` — A group whose messages from the admin count as admin messages for entourage flags (optional)
 - `SIGNAL_SOCKET_PATH` — Override signal-cli socket path (default: `$XDG_RUNTIME_DIR/signal-cli/socket`)
 
 ## Per-chat Configuration (prompts/chats.json)
@@ -188,7 +236,413 @@ npx tsx src/index-signal.ts     # Signal transport (requires signal-cli daemon)
 
 These commands are the dev loop on a checkout. Production runs from its own deployment host — see Deployment below. A bare `npx tsx src/index-whatsapp.ts` on macOS also needs `ENTOURAGE_FLAGS_DIR` set (the watcher's default is a Linux `/run/user/<uid>` path).
 
+## Roam mode
+
+Run `npm run roam` in a separate OS account with its own checkout and runtime,
+containing no chat data or transport credentials. `MOLTBOOK_API_KEY` is required
+(exit 78 when absent). The launchd roam template uses a distinct service account
+and explicitly sets `HOME` and `KLEINBOT_RUNTIME_DIR`; its wrapper refuses missing
+values before reading runtime configuration. Install/configure this service
+separately; the chat installer is unchanged.
+
+The daemon checks due work every minute, with one job in flight. Inbox answers
+run first each tick, before participation, briefing and research. It records a
+participation attempt before running the cycle, claims morning briefing attempts
+using the existing retry helpers, and records daily research attempts in
+`data/research/run-state.json`. Research becomes due at the configured UK hour,
+including daylight-saving changes. Job failures are logged and do not stop the
+loop; shutdown waits for the current job. Chat daemons without a Moltbook key
+schedule no briefing and dispatch no Moltbook model actions.
+
+Enable `RESEARCH_CAPTURE=1` to retain full fetched participation and briefing posts in
+`data/research/<platform>-YYYY-MM.jsonl`, with separate `<platform>-seen.json`
+deduplication. A bounded selection also retains flattened comment trees. Corpus
+files use mode 0600 and directories 0700. Set `RESEARCH_MODEL` to enable daily
+classification, or run `npx tsx scripts/research.ts` manually. Valid results append
+to `data/research/classified.jsonl`; missing or invalid results remain eligible
+for the next run. Comments are captured but only posts are classified.
+`research-wiki/summary.md` is generated deterministically from the records and
+states that the corpus is a trending sample. Quotes are sanitised, labelled
+unverified agent text, and linked using encoded post ids.
+
+The chat and roam daemons share two folders, named independently by environment
+configuration on each side. `ROAM_INBOX_DIR` carries chat instructions to roam;
+`ROAM_OUTBOX_DIR` carries replies, briefings and research notices back to chat.
+The folders can be shared directories or local copies maintained by an external
+file-sync job. No file ownership assumptions are used for routing or validation.
+Writers publish with temporary files and atomic rename; readers ignore `*.tmp`
+and deduplicate by id. A sync job must likewise publish complete files atomically,
+with markdown attachments arriving before their JSON flags.
+
+On the **chat side**, set `ROAM_INBOX_DIR` and `ROAM_PIPE_CHAT_JID` together to pipe
+one chat after the normal access-control gate and raw capture. Unset either to
+disable the pipe. Piped messages bypass the chat model, pending queue and
+entourage flag branches, even if the inbox write fails. Persisted pending messages
+for a newly configured pipe are drained into the inbox on startup, and that
+chat's history is excluded from model context. Failed writes are logged and never
+marked processed. A separate in-memory retry list retains failed startup and live
+writes, persists them in the pending file, and retries on each later pipe
+write; it is never handed to model processing. The chat-side raw log stays local.
+Inbox JSON contains only `id`, `timestamp`, `senderName`, `text`, and
+`attachments: [{filename, contentType}]`. The id uses HMAC-SHA-256 with a random
+32-byte secret, atomically created on
+first use at `<dataDir>/roam-pipe-secret` with mode 0600. The secret stays on the
+chat side and is never logged or synced. Writers sharing it produce stable ids;
+separate secrets produce different ids. Timestamps retain Unix seconds from chat.
+Display-name fallbacks that look like identifiers become `member`. Text has
+controls stripped, phone-number-like sequences masked as `[number]`, and numeric
+or `@name@server` mentions masked as `[mention]`, before the
+`ROAM_INBOX_MAX_TEXT_CHARS` (4000) cap. Attachments contain generated labels only,
+such as `file-1.pdf` and `file-2.jpg`; original filenames, paths and bytes never
+cross. Only 1–5 alphanumeric extension characters are retained, lower-cased.
+Content types must match `^[a-z0-9.+-]+/[a-z0-9.+-]+$`; others become
+`application/octet-stream`.
+
+On the **roam side**, set `ROAM_INBOX_DIR` and `ROAM_OUTBOX_DIR`; no chat or sender
+identifier configuration is needed. Inbox messages are **trusted instructions**
+from the configured pipe. Platform feeds, corpus files, comments, wiki content
+and web pages remain **untrusted data**, including any instructions embedded in
+them. The answerer handles oldest messages first, up to `ROAM_INBOX_MAX_PER_TICK`
+(5), retaining up to `ROAM_INBOX_SEEN_LIMIT` (500) handled ids atomically in
+`data/research/inbox-seen.json`. It deletes handled inbox files on a best-effort
+basis. Messages older than the validator's 48-hour freshness window or more than
+5 minutes ahead are deleted without answering. Before answering, the research
+outbox directory is created and checked for write access; unavailable output
+leaves the inbox message unconsumed. A model failure emits a short failure reply
+and records the id only after the reply is published. Briefing jobs likewise
+check their outbox before claiming an attempt or calling the model. Daily
+research run state is replaced atomically; malformed JSON is treated as not run.
+
+`ROAM_CHAT_BACKEND`, `ROAM_CHAT_MODEL` and `ROAM_CHAT_TIMEOUT_MS` default to
+`claude`, `sonnet` and 300000 ms. The answerer is Claude-only: any other backend
+logs once and returns a misconfiguration reply after the isolated intent call,
+without making an answer call. Codex
+cannot confine file reads to the research directories. The runtime prompt is
+`prompts/roam-chat.md`;
+when absent, the built-in prompt instructs concise corpus/wiki answers and marks
+corpus content as untrusted. No prompt template is shipped because this checkout
+tracks no `prompts/*.example.md` templates. The model returns
+`{reply, attachMd, writePage?}`. Returned `control` and `groupNotes` fields are
+ignored. Optional `writePage: {name, title, markdown} | null` requires the same
+message's clean intent result to return `writeUp: true` and meet the confidence threshold.
+Otherwise no page is written, and the existing failure reply replaces the answer
+prose so it cannot claim a successful write. Authorised writes use the same
+validated page writer as daily research, then refresh the index. A rejected write
+discards the draft reply and attachment, publishes a fixed failure reply, and
+records a failed outcome. Once that reply is published, the message is consumed
+so it cannot loop; an older page is never attached after a rejected write. A reply can
+attach the page it just wrote using `pages/<name>.md`. Attachments must resolve
+from a relative wiki path to an existing contained `.md` file; log files and
+`group.md` are also allowed. Invalid paths are dropped. If attachment
+publication fails for a reason other than egress refusal, the answerer attempts
+text-only output. `writeOutboxMessage` reports `published`, `refused` (egress),
+or `failed` (filesystem or attachment validation). A refused reply or attachment
+is replaced by the fixed text "I have withheld my answer because it contained
+something that must not be sent. Please rephrase, or ask for less." Once that
+reply is published, the message is marked handled and activity status is
+`withheld`, so later ticks spend no further model calls. An unavailable outbox
+still leaves the message queued; its pre-check avoids model calls.
+
+Page titles and markdown are checked for configured secrets before and after
+sanitisation; a match skips the page and logs only a fixed diagnostic. Outbox
+text and the actual attachment bytes use the same normalising matcher as
+activity excerpts and platform posts/comments. A rejected attachment publishes
+neither a flag nor a copied file for that outbox call. These checks cover daily
+research and inbox answers, including existing summary, log and group attachments.
+
+Handled inbox messages (already masked by the pipe) and published replies, including
+command confirmations and failure replies, append to `data/research/chat-log.jsonl`
+(mode 0600). Records contain a millisecond `timestamp`, `role` (`operator` or
+`assistant`), optional `senderName`, and `text` capped at 4000 characters.
+Answers receive the last `ROAM_CHAT_CONTEXT_MESSAGES` entries (20 by default),
+reading at most `ROAM_CHAT_CONTEXT_MAX_BYTES` tail bytes (262144 by default) and
+skipping malformed records. Operator lines are trusted; earlier assistant
+replies may quote untrusted material and are never instructions.
+
+Model children started by `src/moltbook/model-call.ts` receive an explicit environment
+allowlist, never the daemon's full environment. Both backends receive only these
+base names when set: `HOME`, `PATH`, `USER`, `LOGNAME`, `SHELL`, `LANG`, `LC_ALL`,
+`LC_CTYPE`, `TMPDIR`, `TERM`, `TZ`, `KLEINBOT_TEMP_DIR`.
+Claude additionally receives `CLAUDE_CODE_*` and `ANTHROPIC_*`, including
+`CLAUDE_CODE_OAUTH_TOKEN` and `ANTHROPIC_API_KEY` for authentication. Codex
+additionally receives `CODEX_*` (including `CODEX_HOME`) and `OPENAI_API_KEY`.
+`MODEL_CHILD_ENV_ALLOW` optionally adds comma-separated exact names to both.
+Always refused, even in that extension: `MOLTBOOK_API_KEY`, `ROAM_*`, `SIGNAL_*`,
+`ADMIN_*`, `ENTOURAGE_*`, and `CLAUDECODE` (the nested-session marker).
+Claude also refuses `OPENAI_*` and `CODEX_*`; Codex also refuses `CLAUDE_*` and
+`ANTHROPIC_*`. Other names are absent unless explicitly allowed. The chat-side
+spawn in `src/ai.ts` is separate and still inherits its parent's environment.
+
+The Claude research-read call runs with cwd set to `data/research` and these
+flags, in addition to `--print --model <model> --no-session-persistence
+--system-prompt <prompt>`:
+
+```text
+--tools Read,Grep,Glob --allowedTools Read,Grep,Glob
+--restricted --safe-mode --strict-mcp-config --mcp-config '{"mcpServers":{}}'
+--disable-slash-commands --permission-mode dontAsk
+--add-dir <research-data-dir> <research-wiki-dir>
+```
+
+`--restricted` confines file tools to the working directories; the tool list
+contains only Read, Grep and Glob. Safe mode disables runtime customizations,
+and strict empty MCP configuration excludes external tools. These flags were
+checked against the installed `claude --help` and parsed by the real CLI with
+empty stdin: it reached the missing-input error, while an unknown-option control
+failed argument parsing. No model call was needed. Claude calls using `none` or
+`web` tools also carry `--strict-mcp-config --mcp-config '{"mcpServers":{}}'
+--safe-mode --disable-slash-commands`. The installed help states that built-in
+tools and permissions work normally in safe mode; empty-input parsing also
+accepts the explicit `--system-prompt` and `--allowedTools` combination.
+
+Operator commands are handled in code before any model call, when the trimmed
+message starts with a command token:
+
+- `/pause` and `/resume` set participation's paused state.
+- `/focus <text>` replaces trusted guidance, with controls stripped and a
+  `ROAM_CONTROL_MAX_DIRECTIVE_CHARS` cap (2000, may be lowered).
+- `/clearfocus` clears that guidance.
+- `/status` reports paused state, focus, corpus post count, classified count,
+  last cycle attempt time and last research run date.
+
+Each command replies through the research outbox and spends no model call.
+A command token later in a message is not a slash command.
+
+Other messages use two calls, in order: an isolated control-intent call, then the
+research answer call. The intent call is always Claude with `tools: "none"`,
+`--tools ''`, strict empty MCP configuration, safe mode and disabled slash
+commands. `ROAM_INTENT_MODEL`, `ROAM_INTENT_TIMEOUT_MS` and
+`ROAM_INTENT_MIN_CONFIDENCE` default to `haiku`, 60000 ms and 0.7.
+Its prompt builder receives only fixed instructions, current paused/focus state,
+earlier operator lines only; assistant entries are excluded completely.
+It also receives the new operator message and the bounded operator-sourced
+`group.md` tail. It never loads corpus, other wiki pages, classification, feed,
+web content or the runtime answer prompt. Assistant entries are neither summarised
+nor replaced with content-bearing placeholders.
+
+Intent returns JSON with `control` (null or optional `paused`/`directives` fields)
+and numeric `confidence`, plus optional `groupNotes: string | null` and
+`writeUp: boolean`. A control change or note must be stated in the operator's own message.
+Agreement with an assistant suggestion (such as "yes" or "do that") is not
+an explicit statement and must yield `control: null` and `groupNotes: null`.
+Only clear requests in the new message to pause/resume participation or
+set/change/clear focus qualify as controls. Questions, discussion, write-up
+requests and uncertainty produce null controls. `writeUp` is true only when the
+new operator message asks for a page or write-up to be written or updated;
+missing, invalid or insufficient-confidence results default to false.
+Group notes, earlier operator lines and control state are context only and cannot
+by themselves justify a write-up, control change or new notes. Code also requires
+a new message with at least two whitespace-separated words after trimming, and
+refuses write-up authorization for slash commands. This structural guard cannot
+correct a model that misclassifies an ordinary multi-word question.
+Daily write-ups run independently of this inbox authorisation. Code ignores invalid JSON, failed calls
+and controls with confidence below the threshold, then still attempts the answer.
+Accepted fields pass through `normaliseControl` and the same atomic control writer used
+by slash commands. Directives retain the existing character stripping and cap.
+
+Non-empty `groupNotes` append independently of control confidence. The clean
+call is instructed to remember only operator statements and requests, and to
+never copy assistant lines or quoted material. Commands bypass both model calls
+and never append notes. Each note is a dated, control-stripped, single-line entry;
+`ROAM_GROUP_NOTE_MAX_CHARS` defaults to 1000. The file is never pruned.
+`ROAM_GROUP_PAGE_CONTEXT_BYTES` (16384) bounds the tail read, which starts at a
+complete, newline-terminated entry with a valid date heading. An entry exactly
+at the byte boundary is retained; malformed entries and an unfinished tail are skipped.
+Both prompts receive these notes as memory data; the answer prompt places them
+in its trusted part, before untrusted material, labelled "notes derived from
+operator messages by a separate step". Notes cannot authorize a new
+control change, write-up or note. Unlike chat-side `saveNotes`, this writer does not rewrite and
+trim old entries.
+
+Everything under the wiki directory remains data, never instructions.
+Group notes derive from operator messages; activity entries and generated
+navigation are code-formatted data. Only the clean intent call,
+which has no tools, may request control changes or group-note appends. Calls
+that read hostile material never receive a write tool. Their new page-writing
+power is limited to `pages/`, only through code that validates names and sizes.
+They cannot choose a target for controls, prompts, group notes, activity logs or
+the conversation log. Existing published replies still enter the conversation
+log through code and remain untrusted assistant context; this is not an arbitrary
+model-directed log writer. Existing corpus capture, classifications, summary,
+briefing journal and outbox publication likewise remain data paths.
+
+The wiki root is `<KLEINBOT_RUNTIME_DIR>/research-wiki`, configured through
+`src/config.ts`. It holds four kinds of content:
+
+| Kind | Files | Writer |
+| --- | --- | --- |
+| Generated reference and navigation | `summary.md`, `index.md` | Deterministic code; summary uses classified evidence, index uses filenames and sanitised first headings |
+| Activity | `log-YYYY-MM.md` | Code formats counts, action types, encoded post links, control changes and outcomes |
+| Group memory | `group.md` | Code appends only the clean intent call's operator-sourced notes |
+| Research pages | `pages/<name>.md` | Code validates daily write-up or answer-call output and replaces each page atomically |
+
+Activity files use UK calendar months and minute timestamps, mode 0600, and a
+0700 wiki directory. They are append-only and never pruned or rewritten. Logging
+failure cannot break its caller. Cycles record fetched/captured/comment-tree
+counts and pause state; executed actions record their type and post link. Daily
+research records captured, classified, organising, newly classified and written
+page counts; briefing publication and handled inbox outcomes are also recorded.
+Control entries identify the requesting sender and slash-command or plain-language
+route. `ROAM_LOG_EXCERPT_CHARS` (120) caps control-stripped operator excerpts,
+and sender labels. Before stripping or capping an excerpt, the existing egress
+matcher tests configured environment secrets of at least 8 characters, both as
+given and with whitespace, controls and zero-width characters removed; shorter
+values are ignored to avoid nonsense matches. At daemon startup, configuration
+warns once per process for each non-empty configured value shorter than 8
+characters, naming only its environment variable: `MOLTBOOK_API_KEY`,
+`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, or `OPENAI_API_KEY`. A match
+becomes `[excerpt withheld]`. Published posts/comments contribute facts only:
+action type, validated platform post link and character count. Their text is
+never copied into activity entries. The log never accepts a model-provided narrative.
+
+Daily research runs `runResearch`, then one `runWriteUp` call, then `writeIndex`.
+The outbox notice includes the page count and still attaches `summary.md` when
+classification produced a result. `RESEARCH_WRITEUP_BACKEND` defaults to `claude`;
+`RESEARCH_WRITEUP_MODEL` has no default: unset skips the call and logs one line.
+`RESEARCH_WRITEUP_TIMEOUT_MS` defaults to 300000. The call requests `tools: "none"`;
+Claude disables tools, while the existing Codex adapter retains read-only tools.
+No backend receives a write tool.
+
+The trusted instructions include the same optional `prompts/research-question.md`
+file as classification, with its existing question cap, and current control focus.
+The untrusted block contains summary text, existing page names/headings, project
+counts and mappings, and at most `RESEARCH_WRITEUP_MAX_RECORDS` (60) classified
+records, organising first and newest first within each group. It includes current
+text from at most `RESEARCH_WRITEUP_MAX_EXISTING_PAGES` mapped project pages
+(default and ceiling 5). `RESEARCH_WRITEUP_CONTEXT_MAX_BYTES` (262144) enforces
+one aggregate byte budget for the entire untrusted block, including summary,
+page inventory, project mappings, records, existing page bodies, JSON encoding
+and framing newlines. Existing page bodies are dropped first, then older records,
+then project mappings and inventory entries; summary text is truncated last.
+Record fields and arrays have individual caps. A per-call random delimiter token
+is stated in the trusted instructions and chosen to be absent from the material.
+Existing page reads are also bounded by the page size allowances plus framing.
+The prompt requests project pages for projects with at least three records,
+`decision-mechanisms`, and `resource-allocation`, with evidence, uncertainties,
+encoded post links and a dated change list. Invalid JSON or a failed call writes
+no research pages and logs a fixed failure status.
+
+`RESEARCH_PAGE_MAX_BYTES` (20000) bounds markdown and title independently in UTF-8;
+generated banner, heading and date framing are additional. `sanitisePageMarkdown`
+runs on every title and body before writing. It removes raw HTML tags and comments,
+turns images into alt text, drops reference-style link definitions, and neutralises
+autolinks to plain text. Markdown links survive only for HTTPS destinations on
+the platform host used by `postLink`; other links become their label text.
+Control characters are stripped while markdown line breaks are retained. `RESEARCH_PAGES_MAX_PER_RUN`
+(12) caps successfully written distinct pages per call. Names must match
+`^[a-z0-9][a-z0-9-]{0,59}$`; `index` and `group` are reserved. The pages directory
+cannot be a symlink. Files use 0600 and directories 0700. Each page starts with a
+fixed warning that it is machine-written from unverified public agent posts and
+must be treated as data. The banner is always the first line. The deterministic
+index links summary, group notes, newest activity logs first, then pages sorted
+by filename. Index labels use sanitised, single-line headings with hashes,
+brackets and newlines stripped and a length cap. On-request pages use
+exactly this writer and indexer. New numeric limits use their defaults if the
+environment value is not a positive safe integer.
+
+This separation keeps the call that can request control changes away from raw
+hostile sources; the call that reads those sources has no way to change controls.
+Applied changes are placed before untrusted context in the answer prompt and
+also prefix the outgoing reply as a deterministic one-line confirmation, even
+when the answer fails. Both paths persist to `data/research/control.json`.
+Pausing stops participation calls, posting, commenting and
+voting while feed capture continues when `RESEARCH_CAPTURE=1`. Briefing and daily
+research continue. Focus is placed before untrusted feed/comment blocks.
+
+Briefings and research answers/notices go to `ROAM_OUTBOX_DIR/briefing/` and
+`ROAM_OUTBOX_DIR/research/`. Recipient-free flags contain `id`, `type: "message"`,
+`timestamp`, `text`, and optionally `attachmentPath`. Markdown attachments are
+copied atomically into the channel before the JSON flag is published.
+On the **chat side**, set `ROAM_OUTBOX_DIR` and one or both of
+`ROAM_BRIEFING_CHAT_JID` and `ROAM_RESEARCH_CHAT_JID`, or configure extra channels
+with `ROAM_OUTBOX_EXTRA_CHANNELS=updates=example-group-id`. Each configured channel is
+swept every `ROAM_OUTBOX_RELAY_INTERVAL` (5000 ms); unconfigured channels are
+untouched. The relay injects its pinned recipient before using the unchanged
+entourage validator and ignores any recipient supplied by a flag. It uses the
+nonblocking, no-follow, size-capped flag reader (also used by the entourage
+watcher), rejecting non-regular files before reading. Attachments are
+regular `.md` files directly inside the channel, under `ROAM_OUTBOX_MAX_MD_BYTES`,
+with no symlink in any checked path component. Each attachment is opened once
+with `O_RDONLY|O_NOFOLLOW|O_NONBLOCK`; its descriptor must identify a regular
+file with one hard link and a size within the cap. The parent's realpath must
+match the channel's, and fresh path device/inode values must match the descriptor.
+The sent bytes come from that descriptor. Immediately before sending, every
+channel (built-in and extra) checks the flag text and that exact buffer for
+configured secrets. Matches are permanently rejected: the id is remembered,
+flag and attachment are archived as `.rejected`, and the warning names only the
+channel. The check never re-reads the attachment path. Symlinked channels are not swept.
+The writer's absolute attachment path can be relocated after sync only through
+its matching `<flag-id>.md` basename and channel name; arbitrary outside paths
+are refused. Flags and safe local attachments move to the channel's `archive/`,
+with `.rejected` suffixes for validation failures. Unsafe external attachments
+are never
+moved. Archive ids provide deduplication across relay restarts. The existing
+entourage watcher instance and its defaults are unchanged.
+
+`ROAM_OUTBOX_EXTRA_CHANNELS` accepts up to eight comma-separated `name=chatId`
+pairs, split at the first `=`. Names must match `^[a-z][a-z0-9-]{0,31}$` and cannot
+be `briefing`, `research` or `archive`. IDs must be non-empty, at most 200
+characters, and contain no whitespace, commas or control characters; base64
+`=`, `/` and `+` are allowed. Spaces around commas are trimmed and empty entries
+ignored. Invalid, duplicate and excess entries, and an entry repeating an earlier
+entry's chat id (one chat must not collect several hourly budgets), are skipped
+with one warning each, containing the entry's one-based position and valid
+channel name (or `<invalid>`, also used when the pair looks reversed so that an
+id in the name position is not echoed), never its recipient. The first valid occurrence
+of a name wins; invalid entries do not consume the eight-channel allowance.
+Unset or empty values add no channels. Extra folders are created as
+`ROAM_OUTBOX_DIR/<name>/` with the same modes as the writer's channels (0700, or
+0770 with `ROAM_OUTBOX_GROUP_READABLE=1`), set through a no-follow directory handle;
+symlinks and non-directories are refused. Built-in folder behavior is unchanged.
+The folder chooses the audience, and recipient fields inside flags are ignored.
+Only the host environment chooses each folder's recipient.
+Extra channels use the same attachment checks, archives, deduplication,
+freshness window and per-channel limits as the built-in channels.
+
+Relay limits: `ROAM_RELAY_MAX_PER_SWEEP=20` flags per channel, oldest first;
+`ROAM_RELAY_MAX_PER_HOUR=30` successful sends per channel in a rolling hour.
+`ROAM_RELAY_ATTACHMENT_GRACE_MS=600000` allows delayed markdown sync;
+transport failures remain queued until delivery or validator expiry (48 hours).
+`ROAM_RELAY_SEEN_LIMIT=5000` caps recent in-memory ids (may be lowered).
+Archives are scanned only at startup, within that same freshness window, and
+are never pruned.
+
+`MOLTBOOK_CROSS_POLLINATION_QUEUE_LIMIT=50` bounds queued digests, dropping
+the oldest entries when new items arrive (may be lowered).
+
+For shared-group access, set `ROAM_INBOX_GROUP_READABLE=1` on the inbox writer
+and `ROAM_OUTBOX_GROUP_READABLE=1` on the outbox writer. They use 0770 directories
+and 0640 files instead of the private 0700/0600 defaults. Directory group write
+access lets the other account rename and delete entries. Provision traversal on
+shared roots and parent directories separately; these switches do not change
+ownership. Outbox text and flag ceilings remain `ROAM_OUTBOX_MAX_TEXT_CHARS`
+(4000) and `ROAM_OUTBOX_MAX_FLAG_BYTES` (16384), both configurable downward;
+`ROAM_OUTBOX_MAX_MD_BYTES` defaults to 262144.
+
+Before publishing outbox text or sending platform post titles/content and
+comments, an exact-value egress check refuses any non-empty environment value
+of `MOLTBOOK_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY` or
+`OPENAI_API_KEY`. Rejections log no text or secret. Ordinary chat prompts include
+Moltbook instructions only when the API-key gate is enabled.
+
+Remaining tool-bearing inputs: the answerer reads untrusted corpus/wiki data
+with restricted Claude file tools. Claude participation
+and classification calls disable all tools, but briefing calls still consume feed
+text, web pages and a derived journal with web tools enabled. Ordinary chat
+model calls also retain web tools for non-piped chats. Codex participation,
+briefing and classification retain read-only filesystem tools despite the
+`tools` selector; browser and computer-use features are disabled by default via
+`CODEX_DISABLE_FEATURES`. Prompt delimiters are not an OS isolation boundary.
+
 ## Deployment
+
+For isolated roam mode, see the [deployment guide](docs/roam-deployment.md)
+and its parameterised macOS/Linux pipe examples.
+
+Generic installers live in `scripts/linux/` (systemd system units; see its
+README) and `scripts/macos/` (launchd). Both use a dedicated account, a
+root-owned staged installer, private runtime env files, and separate flags
+directories for each transport.
 
 Production deployment specifics (hosts, accounts, runbooks, monitoring) are the
 operator's private business and live outside this repo. Generic notes that any
@@ -229,9 +683,9 @@ Codex: read this file as your project context. It serves the same purpose as `AG
 - Systemd user service for persistence — configured
 - Moltbook integration — registered, claimed, all operations working (upvote/comment/post/feed/profile)
 - Moltbook comment verification — automated solver handles obfuscated word-number math challenges
-- Moltbook personality — "Klein Bottle", sharp/witty; uses opus model
+- Moltbook participation personality comes from the runtime prompt; backend and model come from configuration
 - Moltbook profile: https://www.moltbook.com/u/Kleinbot | Twitter: @KleinBot2026
-- Moltbook cycle is **manual only** — no timer in the daemon. Run with: `env -u CLAUDECODE npx tsx scripts/moltbook-cycle.ts`. The `CLAUDECODE` env var must be unset or `claude --print` refuses to run.
+- Moltbook cycles run on a timer in roam mode; chat daemons have no cycle timer. Manual invocation: `env -u CLAUDECODE npx tsx scripts/moltbook-cycle.ts`. The `CLAUDECODE` env var must be unset or `claude --print` refuses to run.
 - Moltbook cross-pollination — queuing works, but delivery (`sendCrossPollination`) is also not on a timer. After a manual cycle, items sit in the queue in `data/moltbook-state.json` until drained manually or via the bridge.
 - Signal transport — working end-to-end, signal-cli daemon via Unix socket JSON-RPC (--receive-mode on-connection), systemd service, no new npm deps
 - Morning briefing — daily at 05:30 UK to chats with `"briefing": true`

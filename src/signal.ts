@@ -7,6 +7,19 @@ import type { Transport, MessageHandler } from "./transport.js";
 
 const MAX_MESSAGE_LENGTH = 2000; // Signal's practical limit
 
+// Where signal-cli writes received attachments: `<config dir>/attachments/`.
+// The config dir is whatever the daemon launcher passes to `signal-cli --config`
+// (SIGNAL_CLI_CONFIG_DIR); only without it does signal-cli use the XDG default
+// ($XDG_DATA_HOME/signal-cli, else ~/.local/share/signal-cli).
+export function signalAttachmentsDir(env: NodeJS.ProcessEnv = process.env): string {
+  const configDir = (env.SIGNAL_CLI_CONFIG_DIR || "").trim();
+  if (configDir) return path.join(configDir, "attachments");
+  const xdgData = (env.XDG_DATA_HOME || "").trim();
+  if (xdgData) return path.join(xdgData, "signal-cli", "attachments");
+  const home = env.HOME || os.homedir();
+  return path.join(home, ".local", "share", "signal-cli", "attachments");
+}
+
 // --- JSON-RPC over Unix socket ---
 
 interface JsonRpcRequest {
@@ -278,9 +291,7 @@ export function createSignalTransport(
 
         // Extract attachments
         if (dataMessage.attachments?.length) {
-          const attachmentsDir = path.join(
-            os.homedir(), ".local", "share", "signal-cli", "attachments",
-          );
+          const attachmentsDir = signalAttachmentsDir();
           chatMessage.attachments = dataMessage.attachments.map((att: any) => ({
             id: att.id || att.remoteId || String(att.uploadTimestamp || ""),
             contentType: att.contentType || "application/octet-stream",

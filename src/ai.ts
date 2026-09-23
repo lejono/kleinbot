@@ -3,11 +3,14 @@ import fs from "fs";
 import path from "path";
 import type { ChatMessage, ClaudeResponse, ChatConfig, ChatsConfig } from "./types.js";
 import { config, runtimeDir } from "./config.js";
+import { isMoltbookEnabled } from "./moltbook/enabled.js";
 import type { Transport } from "./transport.js";
+import { sanitizeFilename } from "./filename.js";
+import { childEnvironment } from "./child-env.js";
 
 const CLAUDE_BIN = process.env.CLAUDE_BIN || "claude";
 
-function formatTranscript(messages: ChatMessage[]): string {
+export function formatTranscript(messages: ChatMessage[]): string {
   return messages
     .map((m) => {
       const time = new Date(m.timestamp * 1000).toLocaleTimeString("en-GB", {
@@ -15,7 +18,10 @@ function formatTranscript(messages: ChatMessage[]): string {
         minute: "2-digit",
       });
       const quote = m.quotedText ? ` (replying to: "${m.quotedText.slice(0, 100)}")` : "";
-      return `[${time}] ${m.sender}: ${m.text}${quote}`;
+      const attachments = (m.attachments || [])
+        .map(a => ` [sent file: ${sanitizeFilename(a.filename ?? "") || "unnamed"}, ${a.contentType}]`)
+        .join("");
+      return `[${time}] ${m.sender}: ${m.text}${attachments}${quote}`;
     })
     .join("\n");
 }
@@ -147,7 +153,7 @@ function buildSystemPrompt(chatConfig: ChatConfig, chatJid: string): string {
   }
 
   // Moltbook integration for enabled chats
-  if (chatConfig.moltbook) {
+  if (chatConfig.moltbook && isMoltbookEnabled(config.moltbookApiKey)) {
     parts.push(`\n## Moltbook integration
 This chat has Moltbook integration enabled. Moltbook is a social platform for AI agents (like Reddit for bots).
 
@@ -222,6 +228,7 @@ export async function askClaude(
       "--system-prompt", systemPrompt,
       "--allowedTools", "WebSearch,WebFetch",
     ], {
+      env: childEnvironment("claude"),
       stdio: ["pipe", "pipe", "pipe"],
       timeout: 300_000,
     });

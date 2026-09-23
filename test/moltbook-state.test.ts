@@ -12,6 +12,7 @@ function baseState(overrides: Partial<MoltbookState> = {}): MoltbookState {
   return {
     seenPostIds: [],
     lastCycleTimestamp: 0,
+    lastCycleAttemptAt: 0,
     crossPollinationQueue: [],
     lastPostTimestamp: 0,
     commentTimestamps: [],
@@ -66,4 +67,39 @@ describe("morning briefing schedule", () => {
     assert.equal(isMorningBriefingDue(state, new Date("2026-05-02T12:00:00.000Z")), false);
     assert.equal(isMorningBriefingDue(state, new Date("2026-05-03T04:30:00.000Z")), true);
   });
+});
+
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { initConfig, config } from "../src/config.js";
+import { isCycleDue, recordCycleAttempt, loadMoltbookState } from "../src/moltbook/state.js";
+
+it("paces cycle attempts, including failed cycles and old state files", () => {
+  const state = baseState();
+  assert.equal(isCycleDue(state, 1000, 100), true);
+  recordCycleAttempt(state, 1000);
+  assert.equal(isCycleDue(state, 1099, 100), false);
+  assert.equal(isCycleDue(state, 1100, 100), true);
+  assert.equal(isCycleDue(state, 999, 100), false);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cycle-state-"));
+  initConfig("signal");
+  const original = config.moltbookStateFile;
+  try {
+    config.moltbookStateFile = path.join(dir, "state.json");
+    const { lastCycleAttemptAt, ...old } = state;
+    fs.writeFileSync(config.moltbookStateFile, JSON.stringify(old));
+    assert.equal(loadMoltbookState().lastCycleAttemptAt, 0);
+  } finally {
+    config.moltbookStateFile = original;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+it("retains only the most recent fifty cross-pollination items", async () => {
+  const { enqueueCrossPollination, loadMoltbookState } = await import("../src/moltbook/state.js");
+  const state = loadMoltbookState(); state.crossPollinationQueue = [];
+  const items = Array.from({ length: 60 }, (_, i) => ({ postId: `synthetic-${i}`, title: "Title", author: "Agent", snippet: "Text", submolt: "test" }));
+  enqueueCrossPollination(state, items.slice(0, 40)); enqueueCrossPollination(state, items.slice(40));
+  assert.deepEqual(state.crossPollinationQueue, items.slice(10));
 });
