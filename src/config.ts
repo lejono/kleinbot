@@ -126,15 +126,20 @@ function positiveLimit(name: string, fallback: number): number {
   return Number.isSafeInteger(value) && value > 0 ? value : fallback;
 }
 
+export const usageSummaryMaxBytes = positiveLimit("USAGE_SUMMARY_MAX_BYTES", 4 * 1024 * 1024);
+
 export const researchConfig = {
+  digestItems: positiveLimit("RESEARCH_DIGEST_ITEMS", 5),
+  attachSummary: process.env.RESEARCH_ATTACH_SUMMARY === "1",
   pageMaxBytes: positiveLimit("RESEARCH_PAGE_MAX_BYTES", 20000),
   pagesMaxPerRun: positiveLimit("RESEARCH_PAGES_MAX_PER_RUN", 12),
   writeupBackend: backend("RESEARCH_WRITEUP_BACKEND", "claude"),
   writeupModel: process.env.RESEARCH_WRITEUP_MODEL || "",
+  writeupPagesPerRun: positiveLimit("RESEARCH_WRITEUP_PAGES_PER_RUN", 4),
   writeupMaxRecords: positiveLimit("RESEARCH_WRITEUP_MAX_RECORDS", 60),
   writeupMaxExistingPages: Math.min(5, positiveLimit("RESEARCH_WRITEUP_MAX_EXISTING_PAGES", 5)),
   writeupContextMaxBytes: positiveLimit("RESEARCH_WRITEUP_CONTEXT_MAX_BYTES", 262144),
-  writeupTimeoutMs: positiveLimit("RESEARCH_WRITEUP_TIMEOUT_MS", 300000),
+  writeupTimeoutMs: positiveLimit("RESEARCH_WRITEUP_TIMEOUT_MS", 600000),
   backend: backend("RESEARCH_BACKEND", "codex"),
   model: process.env.RESEARCH_MODEL || "",
   batchSize: Number(process.env.RESEARCH_BATCH_SIZE || 20),
@@ -186,6 +191,10 @@ function parseOutboxExtraChannels(value: string | undefined): { channel: string;
 }
 
 export const roamConfig = {
+  // Deprecated operator-only name is a fallback when the conversation limit is unset.
+  cycleContextMessages: positiveLimit(process.env.ROAM_CYCLE_CONTEXT_MESSAGES === undefined
+    ? "ROAM_CYCLE_OPERATOR_MESSAGES" : "ROAM_CYCLE_CONTEXT_MESSAGES", 20),
+  cycleContextMaxBytes: positiveLimit("ROAM_CYCLE_CONTEXT_MAX_BYTES", 32768),
   groupNoteMaxChars: positiveLimit("ROAM_GROUP_NOTE_MAX_CHARS", 1000),
   groupPageContextBytes: positiveLimit("ROAM_GROUP_PAGE_CONTEXT_BYTES", 16384),
   logExcerptChars: positiveLimit("ROAM_LOG_EXCERPT_CHARS", 120),
@@ -222,3 +231,10 @@ export const roamConfig = {
 };
 
 export const crossPollinationQueueLimit = Math.min(50, Number(process.env.MOLTBOOK_CROSS_POLLINATION_QUEUE_LIMIT || 50));
+
+export const moltbookPresenceConfig = {
+  voiceMaxChars: positiveLimit("MOLTBOOK_VOICE_MAX_CHARS", 2000),
+  followsPerDay: positiveLimit("MOLTBOOK_FOLLOWS_PER_DAY", 3),
+  replyLookbackDays: positiveLimit("MOLTBOOK_REPLY_LOOKBACK_DAYS", 3),
+  replyThreads: positiveLimit("MOLTBOOK_REPLY_THREADS", 5),
+};

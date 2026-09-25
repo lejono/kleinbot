@@ -30,13 +30,13 @@ it("passes exact CLI flags, stdin and schema; cleans codex workspace", async () 
   const original = { ...modelConfig };
   try {
     const bin = path.join(dir, "fake");
-    fs.writeFileSync(bin, `#!/bin/sh\nprintf '%s\\n' "$@" > '${dir}/args'\ncat > '${dir}/stdin'\nif [ "$1" = exec ]; then\n while [ "$1" != -o ]; do shift; done\n printf 'answer' > "$2"\nelse\n printf 'answer'\nfi\n`, { mode: 0o700 });
+    fs.writeFileSync(bin, `#!/bin/sh\nprintf '%s\\n' "$@" > '${dir}/args'\ncat > '${dir}/stdin'\nif [ "$1" = exec ]; then\n while [ "$1" != -o ]; do shift; done\n printf 'answer' > "$2"\nelse\n printf '{"result":"answer"}'\nfi\n`, { mode: 0o700 });
     modelConfig.claudeBin = modelConfig.codexBin = bin;
     const opts = { model: "test-model", systemPrompt: "instructions", prompt: "data", timeoutMs: 1000 };
     for (const tools of ["none", "web"] as const) {
       assert.equal(await callModel({ ...opts, backend: "claude", tools }), "answer");
       assert.deepEqual(fs.readFileSync(path.join(dir, "args"), "utf8").trimEnd().split("\n"),
-        ["--print", "--model", "test-model", "--no-session-persistence", "--system-prompt", "instructions",
+        ["--print", "--model", "test-model", "--no-session-persistence", "--system-prompt", "instructions", "--output-format", "json",
           "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', "--safe-mode", "--disable-slash-commands",
           ...(tools === "none" ? ["--tools"] : ["--allowedTools", "WebSearch,WebFetch"])]);
       if (tools === "none") assert.ok(fs.readFileSync(path.join(dir, "args"), "utf8").endsWith("--tools\n\n"));
@@ -47,7 +47,7 @@ it("passes exact CLI flags, stdin and schema; cleans codex workspace", async () 
       assert.equal(await callModel({ ...opts, backend: "codex", tools: "none", outputSchemaFile: "schema.json" }), "answer");
       const args = fs.readFileSync(path.join(dir, "args"), "utf8").trimEnd().split("\n");
       const workspace = args[args.indexOf("-C") + 1];
-      assert.deepEqual(args, ["exec", "-m", "test-model", "--sandbox", "read-only", "--skip-git-repo-check", "--ephemeral",
+      assert.deepEqual(args, ["exec", "--json", "-m", "test-model", "--sandbox", "read-only", "--skip-git-repo-check", "--ephemeral",
         ...codexDisableFeatures.flatMap(feature => ["--disable", feature]),
         "-C", workspace, "-o", path.join(workspace, "answer.txt"), "--output-schema", "schema.json", "-"]);
       assert.equal(fs.existsSync(workspace), false);
@@ -91,7 +91,7 @@ fs.writeFileSync(${JSON.stringify(path.join(dir, "env.json"))}, JSON.stringify(p
 fs.readFileSync(0);
 const args = process.argv.slice(2);
 if (args[0] === 'exec') fs.writeFileSync(args[args.indexOf('-o') + 1], 'answer');
-else process.stdout.write('answer');
+else process.stdout.write(JSON.stringify({result:'answer'}));
 `, { mode: 0o700 });
       modelConfig[backend === "claude" ? "claudeBin" : "codexBin"] = bin;
       for (const extend of [false, true]) {

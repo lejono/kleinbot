@@ -32,7 +32,7 @@ const fs = require('node:fs'), path = require('node:path');
 const root = path.dirname(process.argv[1]);
 const input = fs.readFileSync(0, 'utf8');
 fs.appendFileSync(path.join(root, 'calls'), 'call\\n');
-process.stdout.write(input.includes('ROAM_CONTROL_INTENT') ? '{"control":null,"confidence":1,"writeUp":true}' : fs.readFileSync(path.join(root, 'reply'), 'utf8'));
+process.stdout.write(JSON.stringify({result:input.includes('ROAM_CONTROL_INTENT') ? '{"control":null,"confidence":1,"writeUp":true}' : fs.readFileSync(path.join(root, 'reply'), 'utf8')}));
 `, { mode: 0o700 });
       let injected = 0;
       const rename = fs.renameSync;

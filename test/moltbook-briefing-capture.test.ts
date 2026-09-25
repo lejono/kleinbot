@@ -24,7 +24,7 @@ it("captures the complete briefing feed before filtering and tolerates capture f
   fs.writeFileSync(path.join(promptsDir, "briefing.md"), "Synthetic briefing instructions.");
   fs.writeFileSync(path.join(promptsDir, "moltbook.md"), "Synthetic cycle instructions.");
   const bin = path.join(dir, "model");
-  fs.writeFileSync(bin, `#!/bin/sh\nprintf 'call\\n' >> '${dir}/calls'\ncat > '${dir}/stdin'\nprintf '{"message":"Synthetic briefing"}'\n`, { mode: 0o700 });
+  fs.writeFileSync(bin, `#!/bin/sh\nprintf 'call\\n' >> '${dir}/calls'\ncat > '${dir}/stdin'\nprintf '%s' '{"result":"{\\"message\\":\\"Synthetic briefing\\"}"}'\n`, { mode: 0o700 });
   Object.assign(modelConfig, { claudeBin: bin, briefingBackend: "claude", moltbookBackend: "claude" });
   Object.assign(researchConfig, { capture: true, maxCommentFetch: 1 });
   const post = (id: string): MoltbookPost => ({ id, title: "Synthetic title", content: "x".repeat(800),

@@ -24,6 +24,10 @@ const MORNING_BRIEFING_MINUTE_UK = 30;
 
 function defaultState(): MoltbookState {
   return {
+    followedAgentNames: [],
+    followDate: "",
+    followsToday: 0,
+    answeredReplyIds: [],
     seenPostIds: [],
     lastCycleTimestamp: 0,
     lastCycleAttemptAt: 0,
@@ -47,6 +51,7 @@ export function loadMoltbookState(): MoltbookState {
 }
 
 export function saveMoltbookState(state: MoltbookState): void {
+  state.answeredReplyIds = [...new Set(state.answeredReplyIds || [])].slice(-1000);
   // Trim seen posts to prevent unbounded growth
   if (state.seenPostIds.length > MAX_SEEN_POSTS) {
     state.seenPostIds = state.seenPostIds.slice(-MAX_SEEN_POSTS);
@@ -109,7 +114,7 @@ export function drainCrossPollination(
 
 // --- Morning briefing helpers ---
 
-function todayUK(now = new Date()): string {
+export function todayUK(now = new Date()): string {
   const parts = new Intl.DateTimeFormat("en-GB", {
     timeZone: "Europe/London",
     year: "numeric",

@@ -18,7 +18,7 @@ export function appendChat(entry: ChatEntry): void {
   } finally { fs.closeSync(fd); }
 }
 
-export function readRecentChat(n = roamConfig.chatContextMessages): ChatEntry[] {
+export function readRecentChat(n = roamConfig.chatContextMessages, role?: ChatEntry["role"]): ChatEntry[] {
   if (!Number.isFinite(n) || n < 1) return [];
   let fd: number | undefined;
   try {
@@ -41,6 +41,7 @@ export function readRecentChat(n = roamConfig.chatContextMessages): ChatEntry[] 
         if (!entry || !Number.isFinite(entry.timestamp) || typeof entry.text !== "string"
           || (entry.role !== "operator" && entry.role !== "assistant")
           || (entry.senderName !== undefined && typeof entry.senderName !== "string")) continue;
+        if (role && entry.role !== role) continue;
         entries.push({ timestamp: entry.timestamp, role: entry.role, text: entry.text.slice(0, 4000),
           ...(entry.senderName === undefined ? {} : { senderName: entry.senderName }) });
       } catch { /* Skip malformed or incomplete records. */ }

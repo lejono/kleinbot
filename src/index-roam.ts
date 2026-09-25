@@ -4,10 +4,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { config, initConfig, moltbookHeartbeatInterval, roamConfig } from "./config.js";
 import { runMoltbookCycle, runMorningBriefing } from "./moltbook/cycle.js";
-import { loadMoltbookState, saveMoltbookState, isCycleDue, recordCycleAttempt,
+import { loadMoltbookState, saveMoltbookState, isCycleDue,
   claimMorningBriefingAttempt, hasRunToday, recordMorningBriefingFailure } from "./moltbook/state.js";
 import { answerInbox } from "./roam/answer.js";
 import { canWriteOutbox, writeOutboxMessage } from "./roam/outbox.js";
+import { writeResearchNotice } from "./research/digest.js";
 import { runResearch } from "./research/classify.js";
 import { claimResearchRun } from "./roam/schedule.js";
 
@@ -29,8 +30,6 @@ async function tick(): Promise<void> {
       const state = loadMoltbookState();
       const now = Date.now();
       if (!isCycleDue(state, now, moltbookHeartbeatInterval)) return;
-      recordCycleAttempt(state, now);
-      saveMoltbookState(state);
       await runMoltbookCycle();
     },
     async () => {
@@ -58,8 +57,7 @@ async function tick(): Promise<void> {
       const pages = await runWriteUp();
       writeIndex();
       if (result) logActivity("research", { ...result, pagesWritten: pages.length });
-      if (result) writeOutboxMessage("research",
-        `Research: ${result.captured} captured, ${result.classified} classified, ${result.organising} organising, ${pages.length} pages written.`, result.summaryPath);
+      if (result) await writeResearchNotice(result, pages);
     },
   ];
   try {

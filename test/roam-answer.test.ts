@@ -20,7 +20,7 @@ fs.appendFileSync(path.join(root, 'calls'), JSON.stringify({ args, input, cwd: p
 const reply = input.includes('ROAM_CONTROL_INTENT') ? (fs.existsSync(path.join(root, 'intent')) ? fs.readFileSync(path.join(root, 'intent'), 'utf8') : '{"control":null,"confidence":1}') : fs.readFileSync(path.join(root, 'reply'), 'utf8');
 if (reply === 'FAIL') process.exit(9);
 if (args[0] === 'exec') fs.writeFileSync(args[args.indexOf('-o') + 1], reply);
-else process.stdout.write(reply);
+else process.stdout.write(JSON.stringify({result:reply}));
 `, { mode: 0o700 });
       const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", `
 import assert from 'node:assert/strict';
@@ -58,8 +58,19 @@ assert.deepEqual(readRecentChat().map(e=>[e.role,e.text]), [['operator','Synthet
 const first = calls()[1];
 assert.equal(first.cwd,researchConfig.dir);
 const a=first.args;
+const assertParticipation = system => {
+  assert.match(system, /Write like a particular person with opinions, in plain language with specific details/);
+  assert.match(system, /Say one thing well rather than summarising everything/);
+  assert.match(system, /You cannot act on the platform yourself/);
+  assert.match(system, /what to post, comment on, pursue or avoid/);
+  assert.match(system, /carried automatically into the next participation round/);
+  assert.match(system, /about every 2 hours/);
+  assert.match(system, /Reply briefly acknowledging/);
+  assert.match(system, /rather than saying you are a different bot or refusing/);
+};
+assertParticipation(a[a.indexOf('--system-prompt')+1]);
 if(roamConfig.chatBackend==='claude') {
-  assert.deepEqual(a,['--print','--model','synthetic-model','--no-session-persistence','--system-prompt',a[5],
+  assert.deepEqual(a,['--print','--model','synthetic-model','--no-session-persistence','--system-prompt',a[5],'--output-format','json',
     '--tools','Read,Grep,Glob','--allowedTools','Read,Grep,Glob','--restricted','--safe-mode',
     '--strict-mcp-config','--mcp-config','{"mcpServers":{}}','--disable-slash-commands',
     '--permission-mode','dontAsk','--add-dir',researchConfig.dir,researchConfig.wikiDir]);
@@ -87,6 +98,12 @@ const command = async (text) => {
   const expected = text.startsWith('/pause') ? 'Paused participation.' : text.startsWith('/resume') ? 'Resumed participation.'
     : text.startsWith('/focus') ? 'Focus updated.' : text.startsWith('/clearfocus') ? 'Focus cleared.' : 'Paused:';
   assert.ok(flags().some(f=>f.text.startsWith(expected)));
+  if (text === '/status') {
+    const status = flags().find(f=>f.text.startsWith('Paused:')).text;
+    assert.match(status,/Usage \\(last 24h\\):/);
+    assert.match(status,/Usage \\(last 7d\\):/);
+    assert.match(status,/claude\\/synthetic-model:.*input unknown/);
+  }
   assert.equal(readRecentChat().at(-2).text,text.slice(0,4000));
   assert.ok(readRecentChat().at(-1).text.startsWith(expected));
 };
@@ -152,6 +169,8 @@ assert.ok(calls().at(-1).input.includes('"timestamp":'+earlier));
 assert.equal(readRoamControl().directives,null);
 assert.equal(fs.readdirSync(roamConfig.inboxDir).length,1);
 assert.ok((calls().at(-1).args.join(' ') + calls().at(-1).input).includes('Synthetic custom instructions'));
+const customArgs = calls().at(-1).args;
+assertParticipation(customArgs[customArgs.indexOf('--system-prompt')+1]);
 fs.writeFileSync(path.join(researchConfig.dir,'inbox-seen.json'),JSON.stringify(Array.from({length:500},(_,i)=>'old-'+i)));
 await answerInbox();
 assert.equal(seen().length,500);
@@ -203,7 +222,7 @@ for (const attachMd of ['group.md',logName]) {
 `], { env: { ...process.env, KLEINBOT_RUNTIME_DIR: dir, MOLTBOOK_API_KEY: "synthetic-key",
         CLAUDE_BIN: bin, CODEX_BIN: bin, ROAM_INBOX_DIR: path.join(dir, "inbox"), ROAM_PIPE_CHAT_JID: "synthetic-group",
         ROAM_OUTBOX_DIR: path.join(dir, "outbox"), ROAM_CHAT_BACKEND: backend, ROAM_CHAT_MODEL: "synthetic-model",
-        MOLTBOOK_BACKEND: backend, RESEARCH_CAPTURE: "1", RESEARCH_MAX_COMMENT_FETCH: "0" }, encoding: "utf8", timeout: 20000 });
+        MOLTBOOK_BACKEND: backend, MOLTBOOK_HEARTBEAT_INTERVAL: "7200000", RESEARCH_CAPTURE: "1", RESEARCH_MAX_COMMENT_FETCH: "0" }, encoding: "utf8", timeout: 20000 });
       assert.equal(result.status, 0, result.stdout + result.stderr);
     } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   });
@@ -256,7 +275,7 @@ const fs = require('node:fs');
 const input = fs.readFileSync(0, 'utf8');
 if (!input.includes('ROAM_CONTROL_INTENT')) process.exit(9);
 fs.appendFileSync(require('node:path').join(require('node:path').dirname(process.argv[1]), 'calls'), 'intent\\n');
-process.stdout.write('{"control":null,"confidence":1}');
+process.stdout.write(JSON.stringify({result:'{"control":null,"confidence":1}'}));
 `, { mode: 0o700 });
     fs.mkdirSync(roamConfig.inboxDir);
     const logs = t.mock.method(console, "error", () => {});

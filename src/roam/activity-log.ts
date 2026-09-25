@@ -4,14 +4,16 @@ import { researchConfig, roamConfig } from "../config.js";
 import { containsConfiguredSecret } from "../moltbook/egress.js";
 import { postLink } from "../research/summary.js";
 
+export type WriteUpReason = "written" | "timeout" | "model-error" | "invalid-json" | "wrong-name" | "too-large" | "rejected";
+
 type ActivityFields = {
   cycle: { fetched: number; captured: number; commentTrees: number; paused: boolean };
-  action: { type: "post" | "comment" | "upvote"; postId: string; textChars?: number };
+  action: { type: "post" | "comment" | "upvote"; postId: string; textChars?: number } | { type: "follow"; agent: string };
   research: { captured: number; classified: number; organising: number; newlyClassified: number; pagesWritten: number };
   briefing: { status: "sent to outbox" | "failed" | "no message" };
   control: { sender: string; via: "slash command" | "plain language"; paused?: boolean; focus?: "updated" | "cleared" };
   inbox: { sender: string; text: string; status: "answered" | "failed" | "withheld" };
-  writeup: { status: "model unset; skipped" | "failed" | "completed"; pagesWritten?: number };
+  writeup: { status: "model unset; skipped" } | { page: string; reason: WriteUpReason };
 };
 
 export function logExcerpt(text: string): string {
@@ -26,6 +28,7 @@ function describe(kind: keyof ActivityFields, fields: any): string {
   switch (kind) {
     case "cycle": return `fetched=${count(fields.fetched)} captured=${count(fields.captured)} commentTrees=${count(fields.commentTrees)} paused=${fields.paused === true}`;
     case "action": {
+      if (fields.type === "follow") return `follow agent=${JSON.stringify(logExcerpt(fields.agent))}`;
       const type = ["post", "comment", "upvote"].includes(fields.type) ? fields.type : "unknown";
       const link = typeof fields.postId === "string" && fields.postId.trim() && !containsConfiguredSecret(fields.postId)
         ? postLink(fields.postId) : "[link withheld]";
@@ -35,7 +38,13 @@ function describe(kind: keyof ActivityFields, fields: any): string {
     case "briefing": return fields.status;
     case "control": return `sender=${JSON.stringify(logExcerpt(fields.sender))} via=${fields.via}${typeof fields.paused === "boolean" ? ` paused=${fields.paused}` : ""}${fields.focus ? ` focus=${fields.focus}` : ""}`;
     case "inbox": return `sender=${JSON.stringify(logExcerpt(fields.sender))} text=${JSON.stringify(logExcerpt(fields.text))} ${fields.status}`;
-    case "writeup": return `${fields.status} pagesWritten=${count(fields.pagesWritten)}`;
+    case "writeup": {
+      if (fields.status === "model unset; skipped") return fields.status;
+      const page = typeof fields.page === "string" && /^[a-z0-9][a-z0-9-]{0,59}$/.test(fields.page)
+        && !containsConfiguredSecret(fields.page) ? fields.page : "[withheld]";
+      const reason = ["written", "timeout", "model-error", "invalid-json", "wrong-name", "too-large", "rejected"].includes(fields.reason) ? fields.reason : "rejected";
+      return `page=${page} reason=${reason}`;
+    }
   }
 }
 

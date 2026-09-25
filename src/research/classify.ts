@@ -34,9 +34,12 @@ Return only JSON matching the supplied schema. Use the exact post id, 2-5 short 
 and a verbatim quote from the post of at most ${researchConfig.maxQuoteChars} characters, or null. Do not invent evidence.`;
 }
 
-export async function runResearch(opts: { now?: Date } = {}): Promise<{
+export interface ResearchResult {
   captured: number; classified: number; organising: number; newlyClassified: number; summaryPath: string;
-} | null> {
+  newRecords: ClassifiedRecord[];
+}
+
+export async function runResearch(opts: { now?: Date } = {}): Promise<ResearchResult | null> {
   if (!researchConfig.model) {
     console.log("[research] RESEARCH_MODEL is unset; skipping classification and summary");
     return null;
@@ -60,7 +63,7 @@ export async function runResearch(opts: { now?: Date } = {}): Promise<{
     if (result) classified.set(key(record), { ...record, ...result });
   }
   const pending = posts.filter(p => !classified.has(key(p)));
-  const initialCount = classified.size;
+  const newRecords: ClassifiedRecord[] = [];
   const temp = fs.mkdtempSync(path.join(tempDir, "research-schema-"));
   const schemaFile = path.join(temp, "schema.json");
   try {
@@ -77,7 +80,7 @@ export async function runResearch(opts: { now?: Date } = {}): Promise<{
           + JSON.stringify(batch.map(p => ({ id: p.id, platform: p.platform, author: p.author,
             community: p.submolt, title: p.title, content: p.content.slice(0, researchConfig.maxPostChars) })))
           + "\n--- END UNTRUSTED POSTS ---";
-        const raw = await callModel({ backend: researchConfig.backend, model: researchConfig.model,
+        const raw = await callModel({ step: "classify", backend: researchConfig.backend, model: researchConfig.model,
           systemPrompt: buildInstructions(), prompt, tools: "none", timeoutMs: researchConfig.timeoutMs,
           ...(researchConfig.backend === "codex" ? { outputSchemaFile: schemaFile } : {}) });
         const parsed = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || raw);
@@ -92,6 +95,7 @@ export async function runResearch(opts: { now?: Date } = {}): Promise<{
             classifiedAt: (opts.now || new Date()).toISOString(), model: researchConfig.model };
           fs.appendFileSync(classifiedFile, JSON.stringify(record) + "\n", { mode: 0o600 });
           classified.set(key(post), record);
+          newRecords.push(record);
           accepted++;
         }
         if (accepted < batch.length) console.error("[research] Some batch results were missing or invalid; retained for retry");
@@ -100,5 +104,5 @@ export async function runResearch(opts: { now?: Date } = {}): Promise<{
   } finally { fs.rmSync(temp, { recursive: true, force: true }); }
   const records = [...classified.values()];
   return { captured: posts.length, classified: records.length, organising: records.filter(r => r.isOrganising).length,
-    newlyClassified: classified.size - initialCount, summaryPath: writeSummary(posts, records) };
+    newlyClassified: newRecords.length, newRecords, summaryPath: writeSummary(posts, records) };
 }

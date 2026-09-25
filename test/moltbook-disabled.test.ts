@@ -36,7 +36,7 @@ it("omits Moltbook instructions from the actual chat model prompt without a key"
     fs.writeFileSync(bin, `#!${process.execPath}
 const fs=require('fs'); fs.readFileSync(0,'utf8');
 fs.writeFileSync(${JSON.stringify(path.join(dir, "args"))},JSON.stringify(process.argv));
-process.stdout.write('{"shouldRespond":false}');
+process.stdout.write(JSON.stringify({result:'{"shouldRespond":false}'}));
 `, { mode: 0o700 });
     const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
       import assert from 'node:assert/strict'; import fs from 'node:fs'; import path from 'node:path';

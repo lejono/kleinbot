@@ -6,6 +6,7 @@ import { config, runtimeDir } from "./config.js";
 import { isMoltbookEnabled } from "./moltbook/enabled.js";
 import type { Transport } from "./transport.js";
 import { sanitizeFilename } from "./filename.js";
+import { claudeResult, modelUsage, recordUsage } from "./usage-log.js";
 import { childEnvironment } from "./child-env.js";
 
 const CLAUDE_BIN = process.env.CLAUDE_BIN || "claude";
@@ -220,49 +221,63 @@ export async function askClaude(
     '{"shouldRespond": true/false, "response": "your message or null", "notes": "anything to remember, or null", "poll": {"question": "...", "options": ["A", "B", "C"], "multiSelect": false} or null, "calendarEvent": {"title": "...", "start": "2026-02-25T19:00:00", "end": "2026-02-25T23:00:00", "location": "...", "description": "..."} or null}',
   ].join("\n");
 
-  const result = await new Promise<string>((resolve, reject) => {
-    const proc = spawn(CLAUDE_BIN, [
-      "--print",
-      "--model", chatConfig.model,
-      "--no-session-persistence",
-      "--system-prompt", systemPrompt,
-      "--allowedTools", "WebSearch,WebFetch",
-    ], {
-      env: childEnvironment("claude"),
-      stdio: ["pipe", "pipe", "pipe"],
-      timeout: 300_000,
-    });
-
-    let stdout = "";
-    let stderr = "";
-    proc.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
-    proc.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
-
-    proc.on("close", (code) => {
-      if (code !== 0) {
-        console.error("Claude CLI error (exit", code + "):", stderr.slice(0, 500));
-        reject(new Error(`claude exited with code ${code}`));
-        return;
-      }
-      resolve(stdout.trim());
-    });
-
-    proc.on("error", reject);
-
-    // Send prompt via stdin
-    proc.stdin.write(prompt);
-    proc.stdin.end();
-  });
-
+  const started = Date.now();
+  const promptBase = path.basename(chatConfig.prompt, path.extname(chatConfig.prompt));
+  const step = /^[a-z][a-z0-9_-]{0,63}$/i.test(promptBase) && !/\d{6}/.test(promptBase)
+    && !promptBase.includes(chatJid) ? promptBase : "default";
+  let stdout = "", ok = false;
   try {
-    const jsonMatch = result.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      console.error("No JSON found in Claude response:", result.slice(0, 200));
+    await new Promise<void>((resolve, reject) => {
+      const proc = spawn(CLAUDE_BIN, [
+        "--print",
+        "--output-format", "json",
+        "--model", chatConfig.model,
+        "--no-session-persistence",
+        "--system-prompt", systemPrompt,
+        "--allowedTools", "WebSearch,WebFetch",
+      ], {
+        env: childEnvironment("claude"),
+        stdio: ["pipe", "pipe", "pipe"],
+        timeout: 300_000,
+      });
+
+      let stderr = "";
+      proc.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
+      proc.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+
+      proc.on("close", (code) => {
+        if (code !== 0) {
+          console.error("Claude CLI error (exit", code + "):", stderr.slice(0, 500));
+          reject(new Error(`claude exited with code ${code}`));
+          return;
+        }
+        resolve();
+      });
+
+      proc.on("error", reject);
+
+      // Send prompt via stdin
+      proc.stdin.on("error", () => {});
+      proc.stdin.write(prompt);
+      proc.stdin.end();
+    });
+
+    const result = claudeResult(stdout);
+    try {
+      const jsonMatch = result.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        console.error("No JSON found in Claude response:", result.slice(0, 200));
+        return { shouldRespond: false };
+      }
+      const response = JSON.parse(jsonMatch[0]) as ClaudeResponse;
+      ok = true;
+      return response;
+    } catch (err) {
+      console.error("Failed to parse Claude response:", result.slice(0, 200));
       return { shouldRespond: false };
     }
-    return JSON.parse(jsonMatch[0]) as ClaudeResponse;
-  } catch (err) {
-    console.error("Failed to parse Claude response:", result.slice(0, 200));
-    return { shouldRespond: false };
+  } finally {
+    recordUsage({ step, backend: "claude", model: chatConfig.model, ok,
+      ...modelUsage("claude", stdout), durationMs: Date.now() - started });
   }
 }

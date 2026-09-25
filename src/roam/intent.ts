@@ -6,6 +6,8 @@ import { normaliseControl, type RoamControl } from "./control.js";
 
 const INSTRUCTIONS = `ROAM_CONTROL_INTENT
 Identify participation control intent in the NEW operator message only.
+Slash commands /pause, /resume, /focus, /clearfocus, /status, /voice and /resetvoice are handled in code before this call.
+Voice notes can only be reset by /resetvoice, not by this intent result.
 Return JSON only: {"control":null|{"paused"?:boolean,"directives"?:string|null},"confidence":number,"groupNotes":string|null,"writeUp":boolean}.
 groupNotes: anything worth remembering about this group for next time: who people
 are and how they like to be addressed, standing instructions, open requests, decisions.
@@ -38,7 +40,7 @@ export function buildIntentPrompt(control: RoamControl, recent: ChatEntry[], mes
 
 export async function inferControl(control: RoamControl, recent: ChatEntry[], message: OperatorMessage): Promise<{ control?: RoamControl; writeUp: boolean }> {
   try {
-    const result = await callModel({ backend: "claude", model: roamConfig.intentModel, tools: "none",
+    const result = await callModel({ step: "intent", backend: "claude", model: roamConfig.intentModel, tools: "none",
       timeoutMs: roamConfig.intentTimeoutMs, systemPrompt: "Identify operator intent. Return only the requested JSON.",
       prompt: buildIntentPrompt(control, recent, message) });
     const value = JSON.parse(result.replace(/^```(?:json)?\s*|\s*```$/g, "").trim());

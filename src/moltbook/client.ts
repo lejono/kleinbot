@@ -1,4 +1,5 @@
 import type {
+  MoltbookProfile,
   MoltbookPost,
   MoltbookComment,
   MoltbookAgent,
@@ -59,7 +60,15 @@ async function rawRequest(
   }
 
   if (!text) return {};
-  return JSON.parse(text);
+  // Escape raw controls inside JSON strings without changing structural whitespace.
+  let quoted = false, escaped = false;
+  const lenient = [...text].map(c => {
+    if (escaped) { escaped = false; return c; }
+    if (quoted && c === "\\") { escaped = true; return c; }
+    if (c === '"') quoted = !quoted;
+    return quoted && c.charCodeAt(0) < 32 ? JSON.stringify(c).slice(1, -1) : c;
+  }).join("");
+  return JSON.parse(lenient);
 }
 
 // --- Agent Management ---
@@ -369,4 +378,19 @@ export async function search(
     apiKey,
   );
   return (json.results || json.data || []) as MoltbookSearchResult[];
+}
+
+export async function getProfileActivity(name: string): Promise<MoltbookProfile> {
+  const json = await rawRequest(`/agents/profile?name=${encodeURIComponent(name)}`);
+  if (!json.agent?.id || !json.agent?.name) throw new Error("Invalid profile");
+  return { agent: json.agent, recentComments: Array.isArray(json.recentComments) ? json.recentComments : [],
+    recentPosts: Array.isArray(json.recentPosts) ? json.recentPosts : [] };
+}
+
+export async function getOwnProfile(apiKey: string): Promise<MoltbookProfile> {
+  const me = await getMe(apiKey);
+  if (!me?.id || !me?.name) throw new Error("Invalid own identity");
+  const profile = await getProfileActivity(me.name);
+  if (profile.agent.id !== me.id) throw new Error("Profile identity mismatch");
+  return profile;
 }

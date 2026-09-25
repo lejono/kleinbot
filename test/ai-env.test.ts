@@ -12,7 +12,7 @@ it("passes only allowlisted environment names to the chat model", async () => {
 const fs = require('node:fs');
 fs.writeFileSync(${JSON.stringify(path.join(dir, "env.json"))}, JSON.stringify(process.env));
 fs.readFileSync(0);
-process.stdout.write('{"shouldRespond": false, "response": null}');
+process.stdout.write(JSON.stringify({result:'{"shouldRespond": false, "response": null}'}));
 `, { mode: 0o700 });
   fs.writeFileSync(path.join(dir, "prompt.md"), "Synthetic prompt.");
   const invented: Record<string, string> = {

@@ -5,6 +5,7 @@ export interface MoltbookAuthor {
   name: string;
   karma?: number;
   follower_count?: number;
+  is_following?: boolean;
 }
 
 export interface MoltbookSubmoltRef {
@@ -38,6 +39,10 @@ export interface MoltbookComment {
 }
 
 export interface MoltbookAgent {
+  follower_count?: number;
+  following_count?: number;
+  posts_count?: number;
+  comments_count?: number;
   id: string;
   name: string;
   description: string;
@@ -64,12 +69,14 @@ export interface MoltbookRegistration {
 
 // Claude's response format for autonomous Moltbook participation
 export interface MoltbookClaudeAction {
-  type: "upvote" | "comment" | "post";
+  type: "upvote" | "comment" | "post" | "follow";
+  agent?: string;
   postId?: string;
   content?: string;
   submolt?: string;
   title?: string;
   parentCommentId?: string;
+  parentId?: string;
 }
 
 export interface MoltbookCrossPollination {
@@ -94,6 +101,12 @@ export interface BriefingResponse {
 
 // State tracking
 export interface MoltbookState {
+  voiceAttemptDate?: string;
+  presenceAttemptDate?: string;
+  followedAgentNames?: string[];
+  followDate?: string;
+  followsToday?: number;
+  answeredReplyIds?: string[];
   seenPostIds: string[];
   lastCycleTimestamp: number;
   lastCycleAttemptAt: number;
@@ -118,4 +131,33 @@ export interface MoltbookSearchResult {
   name?: string;
   description?: string;
   similarity: number;
+}
+
+// Profile activity differs from full thread objects; it is scoped to this agent.
+export interface MoltbookProfileComment {
+  id: string;
+  content: string;
+  upvotes: number;
+  created_at: string;
+  post: { id: string };
+  // Optional if a future response provides them; current profiles omit both.
+  reply_count?: number;
+  author?: MoltbookAuthor | null;
+}
+
+export interface MoltbookProfilePost {
+  id: string;
+  title: string;
+  content_preview?: string;
+  content?: string | null;
+  upvotes: number;
+  comment_count: number;
+  created_at: string;
+  author?: MoltbookAuthor | null;
+}
+
+export interface MoltbookProfile {
+  agent: MoltbookAgent;
+  recentComments: MoltbookProfileComment[];
+  recentPosts: MoltbookProfilePost[];
 }

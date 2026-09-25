@@ -22,7 +22,7 @@ for (const backend of ["claude", "codex"] as const) {
         capturedAt: "2026-01-01", createdAt: "2026-01-01", upvotes: 0, commentCount: 0,
       }) + "\n");
       const bin = path.join(dir, "model");
-      fs.writeFileSync(bin, `#!/bin/sh\nprintf '%s\\n' "$@" > '${dir}/args'\ncat > '${dir}/stdin'\nif [ "$1" = exec ]; then\n while [ "$1" != -o ]; do shift; done\n printf '{"results":[]}' > "$2"\nelse\n printf '{"results":[]}'\nfi\n`, { mode: 0o700 });
+      fs.writeFileSync(bin, `#!/bin/sh\nprintf '%s\\n' "$@" > '${dir}/args'\ncat > '${dir}/stdin'\nif [ "$1" = exec ]; then\n while [ "$1" != -o ]; do shift; done\n printf '{"results":[]}' > "$2"\nelse\n printf '{"result":"{\\"results\\":[]}"}'\nfi\n`, { mode: 0o700 });
       modelConfig.claudeBin = modelConfig.codexBin = bin;
       assert.equal((await runResearch())?.captured, 1);
       const args = fs.readFileSync(path.join(dir, "args"), "utf8");
@@ -71,6 +71,7 @@ it("classifies bounded batches once, rejects foreign and garbage results, and sa
     assert.equal(first?.captured, 2);
     assert.equal(first?.classified, 1);
     assert.equal(first?.newlyClassified, 1);
+    assert.deepEqual(first?.newRecords.map(r => r.id), ["1"]);
     const log = path.join(researchConfig.dir, "classified.jsonl");
     assert.equal(fs.readFileSync(log, "utf8").trim().split("\n").length, 1);
     const prompt = fs.readFileSync(path.join(dir, "prompt"), "utf8");
@@ -97,6 +98,7 @@ it("classifies bounded batches once, rejects foreign and garbage results, and sa
     const complete = await runResearch();
     assert.equal(complete?.classified, 2);
     assert.equal(complete?.newlyClassified, 0);
+    assert.deepEqual(complete?.newRecords, []);
     assert.equal(fs.readFileSync(path.join(dir, "calls"), "utf8"), before);
     const stable = fs.readFileSync(complete!.summaryPath, "utf8");
     await runResearch();
@@ -137,7 +139,7 @@ it("takes the research question from the runtime prompt file, and has none built
       return question;
     });
     const bin = path.join(dir, "model");
-    fs.writeFileSync(bin, `#!/bin/sh\nprintf '%s\\n' "$@" > '${dir}/args'\ncat > '${dir}/stdin'\nprintf '{"results":[]}'\n`, { mode: 0o700 });
+    fs.writeFileSync(bin, `#!/bin/sh\nprintf '%s\\n' "$@" > '${dir}/args'\ncat > '${dir}/stdin'\nprintf '{"result":"{\\"results\\":[]}"}'\n`, { mode: 0o700 });
     modelConfig.claudeBin = bin;
     const sent = () => fs.readFileSync(path.join(dir, "args"), "utf8") + fs.readFileSync(path.join(dir, "stdin"), "utf8");
     await runResearch();

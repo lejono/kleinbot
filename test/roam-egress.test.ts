@@ -27,7 +27,7 @@ it("refuses env secrets in outbox text, platform posts and generated comments", 
     fs.writeFileSync(bin, `#!${process.execPath}
 const input = require('fs').readFileSync(0,'utf8');
 const secret = ${JSON.stringify(process.env.OPENAI_API_KEY)};
-process.stdout.write(JSON.stringify(input.includes('Write a comment') ? {comment:secret} : {actions:[{type:'post',submolt:'synthetic',title:'Title',content:secret},{type:'post',submolt:'synthetic',title:secret,content:'Safe'},{type:'comment',postId:'synthetic-post'}],crossPollinate:[],notes:''}));
+process.stdout.write(JSON.stringify({result:JSON.stringify(input.includes('Write a comment') ? {comment:secret} : {actions:[{type:'post',submolt:'synthetic',title:'Title',content:secret},{type:'post',submolt:'synthetic',title:secret,content:'Safe'},{type:'comment',postId:'synthetic-post'}],crossPollinate:[],notes:''})}));
 `, { mode: 0o700 });
     modelConfig.claudeBin = bin; modelConfig.moltbookBackend = "claude";
     const post = { id: "synthetic-post", title: "Synthetic", content: "Text", submolt: { name: "synthetic" }, author: null, upvotes: 0, comment_count: 0 };

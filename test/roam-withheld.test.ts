@@ -35,7 +35,7 @@ const fs = require('node:fs');
 const input = fs.readFileSync(0, 'utf8');
 const intent = input.includes('ROAM_CONTROL_INTENT');
 fs.appendFileSync(${JSON.stringify(path.join(dir, "calls"))}, intent ? 'intent\\n' : 'answer\\n');
-process.stdout.write(JSON.stringify(intent ? {control:null,confidence:1} : ${JSON.stringify({ reply: kind === "text" ? secret : "Safe answer", attachMd: kind.includes("attachment") ? "summary.md" : null })}));
+process.stdout.write(JSON.stringify({result:JSON.stringify(intent ? {control:null,confidence:1} : ${JSON.stringify({ reply: kind === "text" ? secret : "Safe answer", attachMd: kind.includes("attachment") ? "summary.md" : null })})}));
 `, { mode: 0o700 });
       const inboxFile = path.join(roamConfig.inboxDir, "invented.json");
       fs.writeFileSync(inboxFile, JSON.stringify({ id: "invented-message", timestamp: Math.floor(Date.now() / 1000),

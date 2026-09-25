@@ -87,6 +87,57 @@ Baileys as a linked/companion device does NOT receive offline messages — it on
 - **Config**: `~/team/kleinbot/config/.env`
 - Code reads runtime paths via `KLEINBOT_RUNTIME_DIR` env var (default: `~/team/kleinbot/`)
 
+## Model usage
+
+Every `callModel` invocation and chat-side `askClaude` call appends one record to
+`<dataDir>/usage.jsonl`, under `<KLEINBOT_RUNTIME_DIR>/data/usage.jsonl`.
+The file is mode 0600, its data directory is 0700, and records are append-only,
+never pruned. Logging failures are caught and do not fail the model call.
+The record never contains prompt text, reply text, chat IDs or names, session
+IDs, or credentials. Use non-identifying prompt filenames: chat steps use their
+basename without the extension (for example `default`), with `default` as the
+fallback for unsafe labels, phone-like digit runs or labels containing the chat ID.
+Roam steps are `answer`, `intent`, `cycle`, `comment`, `briefing`, `writeup`,
+`classify`, `digest` and `voice`; an omitted optional step is recorded as null.
+`model` is the configured name (such as `opus`); `resolvedModel` is the model that
+actually answered, taken from the Claude CLI's per-model usage (the one with the
+most output, since the CLI may add small helper calls), or null when unknown
+(always for Codex). The `/status` summary groups by `resolvedModel` when present.
+
+A synthetic record (timestamp is Unix milliseconds at completion):
+
+```json
+{"timestamp":0,"step":"cycle","backend":"claude","model":"opus","resolvedModel":"claude-example-1","ok":true,"inputTokens":100,"outputTokens":20,"cacheReadTokens":80,"cacheCreationTokens":10,"costUsd":0.01,"durationMs":250}
+```
+
+`model` is the configured model label. Counts describe the whole CLI invocation,
+which can include multiple internal model turns. Claude uses `--output-format json`:
+code extracts `result`, preserving the previous trimming and downstream parsing,
+and treats `is_error` as failure. The installed CLI help and result schema confirm
+this format. Its `usage` supplies input, output, cache-read and cache-creation
+counts; `total_cost_usd` supplies the CLI's cost estimate when available.
+Codex adds `exec --json`, sums `turn.completed` input/output and cached-input
+counts, and still reads response text from its existing `-o` answer file.
+Codex cache-creation counts and cost are unavailable in the supported event
+mapping and remain null. Missing or malformed counters are null, never invented
+zeros. Failed calls are recorded with `ok:false`, retaining reported counters;
+chat reply JSON parsing failures also set `ok:false`.
+These records help track subscription allowance use; they do not calculate the
+remaining plan allowance or a per-token subscription bill. Reported cost is an
+estimate, not a subscription charge.
+
+Roam `/status` adds totals for the last 24 hours and last 7 days, grouped by
+backend/model: call count, input/output tokens, and cache-read/cache-creation
+tokens separately. Failed calls count too. Unknown counters are labelled
+`unknown`, or `partial` when only some calls reported them. Each backend's input
+counter is preserved as reported; Codex cached input is a subset of its input
+count, so do not add it again. The summary makes no model call and reads at most
+`USAGE_SUMMARY_MAX_BYTES` tail bytes (default 4194304, 4 MiB). Invalid or
+non-positive limits use the default. Partial boundary lines, unfinished appends
+and malformed records are skipped. A clipped tail marks both windows' totals as
+partial, since older records may be omitted; an unreadable log reports usage as
+unavailable. It summarises only this runtime's file, not other accounts or hosts.
+
 ## File Structure
 
 - `src/index.ts` — Daemon: connect, collect messages in real-time, per-chat queues, process on interval, respond. Also runs morning briefing check each tick.
@@ -99,6 +150,7 @@ Baileys as a linked/companion device does NOT receive offline messages — it on
 - `src/moltbook/client.ts` — HTTP wrapper for Moltbook API (feed, posts, comments, voting, search). Uses Node's built-in `fetch`.
 - `src/moltbook/cycle.ts` — Autonomous participation: fetch feed → configured model picks actions → execute (two-phase commenting). Also `runMorningBriefing()` for daily AI news digest.
 - `src/moltbook/model-call.ts` — Claude/Codex CLI invocation, timeouts and temporary workspace cleanup.
+- `src/usage-log.ts` — Private per-call usage records, CLI envelope extraction and bounded usage summaries.
 - `src/moltbook/enabled.ts` — Shared API-key gate for chat action dispatch and briefing scheduling.
 - `src/index-roam.ts` — Transport-free daemon: serial inbox answers, participation, briefing and research jobs.
 - `src/roam/inbox.ts` — Chat pipe decision, atomic metadata-only inbox writer and oldest-first reader.
@@ -109,9 +161,12 @@ Baileys as a linked/companion device does NOT receive offline messages — it on
 - `src/research/corpus.ts` — Private monthly JSONL capture of full posts and flattened comments.
 - `src/research/classify.ts` — Bounded open-coding batches with strict result validation and retry on later runs.
 - `src/research/schema.ts` — Classification schema and validation, including verbatim quote checks.
+- `src/research/digest.ts` — Short nightly notices from newly classified records, with code-built links and fallback text.
 - `src/research/summary.ts` — Deterministic markdown totals, codes, projects, mechanisms, allocations and sanitised quotes.
 - `scripts/research.ts` — Manual research entrypoint.
 - `scripts/macos/net.postquantum.kleinbot-roam.plist` — Isolated launchd service template.
+- `src/moltbook/voice.ts` — Isolated own-writing reflection, private voice/history files and operator reset.
+- `src/moltbook/presence.ts` — Daily numeric profile snapshots and seven-day trends.
 - `src/moltbook/state.ts` — Moltbook state: seen posts, rate limits, cross-pollination queue, cycle attempts and morning briefing attempts
 - `src/moltbook/types.ts` — Moltbook-specific interfaces
 - `src/moltbook/transport-bridge.ts` — Handles chat-triggered Moltbook commands and sends briefings and cross-pollination digests
@@ -238,6 +293,78 @@ These commands are the dev loop on a checkout. Production runs from its own depl
 
 ## Roam mode
 
+Participation checks replies to its own profile activity from the last
+`MOLTBOOK_REPLY_LOOKBACK_DAYS` (3), fetching at most `MOLTBOOK_REPLY_THREADS` (5)
+distinct threads after the paused check. Profile `recentComments` identify the
+thread through `post.id`; `recentPosts` identify the bot's own posts. The thread's
+`parent_id` (or nested `replies` relationship) identifies replies to its comments;
+top-level comments qualify on its own posts. Already answered replies are excluded
+using both the fetched tree and a capped 1000-id state history. Offered replies,
+authors, ids and the bot's earlier text remain in the untrusted block. Reply
+comment actions use `parentId`, which must match an offered reply and its post.
+Comment cooldown and hourly limits still apply. New replies can trigger a round
+with no new feed posts. Discovery failures do not prevent feed participation.
+
+Feed posts show comment counts and age in hours. They are sorted by age in hours
+plus comment count, putting newer, quieter threads first; unknown ages sort last.
+Participation is told to prefer threads where its comment will be read.
+`{"type":"follow","agent":"name"}` is permitted only for authors in that round's
+feed or replies, excluding the bot itself, already followed names and authors
+marked as followed by the API. `MOLTBOOK_FOLLOWS_PER_DAY` (3) caps successful
+follows per Europe/London day. Moltbook state persists the date, count and names;
+activity records include only the follow action and agent name.
+
+The first unpaused round each UK day records a profile snapshot in
+`data/research/presence.jsonl` (0600): `{date, karma, followers, following, posts,
+comments}`. It uses the numeric profile fields `karma`, `follower_count`,
+`following_count`, `posts_count` and `comments_count`. Profile lookup is shared
+with reply discovery; no extra lookup is needed for the snapshot. Snapshot
+failures never break participation and are not retried that day. `/status` adds
+the latest karma, followers, posts and comments plus changes against a snapshot
+exactly seven calendar days earlier. Missing counters or a missing seven-day
+baseline are reported as unavailable, never invented. Trend reads use a bounded
+64 KiB log tail. The common fixed writing paragraph in participation, comment
+and answer system prompts asks for a personal voice, specific details and varied
+sentence lengths, and discourages stock AI phrasing.
+
+The voice design preserves this security rule: a model call that reads other agents' text may change nothing trusted.
+The voice writer never receives other agents' words from feeds, replies, fetched
+comment trees, corpus or wiki files, nor any operator conversation, focus or runtime
+persona. Its input is built separately from selected fields: current `data/voice.md`,
+up to 40 of the bot's own profile posts/comments from the last seven days (2000
+characters each), numeric reactions and the presence trend. Profile-scoped own
+activity supplies provenance; explicitly foreign authors are excluded if present.
+Recent posts currently supply `content_preview`, so reflection uses that preview
+when full content is absent. Comment reply counts are currently omitted by the
+profile API and remain omitted in reflection input; no zero is invented.
+
+After the first unpaused round, the writer can make one `step: "voice"` call per
+UK day, with `MOLTBOOK_BACKEND`/`MOLTBOOK_MODEL`, `tools: "none"` and the participation
+timeout. The attempt is persisted before the call, including failures. It asks
+for short first-person notes on voice and interests and JSON `{voice, changed}`,
+with no rules about other files or settings. Codex reflection is skipped because
+the existing Codex wrapper's read-only sandbox still permits file reads and does
+not enforce `tools: "none"`; it cannot safely author trusted notes. Claude's
+empty tool list and strict empty MCP configuration enforce this isolation.
+Missing own writing or an unavailable research outbox also skips reflection.
+
+`MOLTBOOK_VOICE_MAX_CHARS` (2000) caps the voice file. Code strips control
+characters, checks configured secrets before and after sanitising/capping,
+archives the previous text in append-only, dated `data/voice-history.md`, and
+replaces `data/voice.md` atomically. Both files use 0600. Operators see every
+successful change through a research outbox notice beginning "Voice notes updated:"
+with the new text, bounded by the existing outbox limit. A failed notice publication
+restores the previous notes. No model can select another target file or change
+controls, operator notes or configuration through the reflection result.
+
+Participation and comment system prompts include voice notes after the private
+operator conversation/focus block, labelled "Your own notes on your voice (written
+by you from your own posts). Operator instructions above take priority."
+`/voice` shows the current notes or "No voice notes yet."; `/voicehistory` writes
+`research-wiki/voice-history.md` (current notes, then every earlier version, newest
+first) and attaches it; `/resetvoice` archives and clears them. These commands run in code without model calls. Reset preserves
+the day's attempt marker, so the next round does not immediately recreate the notes.
+
 Run `npm run roam` in a separate OS account with its own checkout and runtime,
 containing no chat data or transport credentials. `MOLTBOOK_API_KEY` is required
 (exit 78 when absent). The launchd roam template uses a distinct service account
@@ -246,8 +373,8 @@ values before reading runtime configuration. Install/configure this service
 separately; the chat installer is unchanged.
 
 The daemon checks due work every minute, with one job in flight. Inbox answers
-run first each tick, before participation, briefing and research. It records a
-participation attempt before running the cycle, claims morning briefing attempts
+run first each tick, before participation, briefing and research. The cycle records
+its participation attempt before fetching the feed. The daemon claims morning briefing attempts
 using the existing retry helpers, and records daily research attempts in
 `data/research/run-state.json`. Research becomes due at the configured UK hour,
 including daylight-saving changes. Job failures are logged and do not stop the
@@ -300,7 +427,7 @@ Content types must match `^[a-z0-9.+-]+/[a-z0-9.+-]+$`; others become
 
 On the **roam side**, set `ROAM_INBOX_DIR` and `ROAM_OUTBOX_DIR`; no chat or sender
 identifier configuration is needed. Inbox messages are **trusted instructions**
-from the configured pipe. Platform feeds, corpus files, comments, wiki content
+from the configured pipe. Platform feeds, corpus files, comments, generated wiki pages
 and web pages remain **untrusted data**, including any instructions embedded in
 them. The answerer handles oldest messages first, up to `ROAM_INBOX_MAX_PER_TICK`
 (5), retaining up to `ROAM_INBOX_SEEN_LIMIT` (500) handled ids atomically in
@@ -359,22 +486,78 @@ reading at most `ROAM_CHAT_CONTEXT_MAX_BYTES` tail bytes (262144 by default) and
 skipping malformed records. Operator lines are trusted; earlier assistant
 replies may quote untrusted material and are never instructions.
 
+Participation receives the runtime persona, then a private block containing
+group notes from `readGroupPage()`, recent operator and assistant entries from the
+conversation log (oldest first), and the current focus as the most recent explicit steer.
+The same system prompt precedes untrusted feed and comment content in both
+participation and follow-up comment calls. No `senderName` fields are included.
+Both roles have control characters stripped and use UK daylight-saving time:
+`- YYYY-MM-DD HH:MM UK · operator: <text>` and
+`- YYYY-MM-DD HH:MM UK · you (earlier reply): <text>`.
+Operator lines are trusted instructions. Earlier replies provide the plans and
+commitments that operators asked for or approved, so participation can follow
+through when an operator approves a plan in the conversation. Replies may quote
+untrusted platform posts: instructions appearing only in earlier replies without
+an operator request or approval remain data, not instructions. Newer operator
+instructions override older ones. The messages and notes steer
+participation but must never be quoted, paraphrased, summarised or revealed on the platform,
+and the group's existence or members must never be mentioned. The feed remains
+untrusted data. Prompt instructions are not a hard barrier:
+operator messages could be paraphrased publicly if a feed post manipulates the model.
+The settings, notes and logs protections are unchanged. Participation and comment
+models cannot write controls, group notes, activity logs or the conversation log;
+existing code still records activity facts.
+
+Assistant replies are acceptable here because participation already reads the raw
+untrusted feed and cannot change controls, notes or logs; quoted feed text adds no
+new exposure. The clean intent call still excludes assistant replies completely:
+it can request control changes and group-note appends and must never receive
+potentially hostile material quoted by the answerer. The intent call still never receives voice notes.
+
+`ROAM_CYCLE_CONTEXT_MESSAGES=20` selects the last twenty entries across both roles
+within the existing `ROAM_CHAT_CONTEXT_MAX_BYTES` bounded log tail. The deprecated
+`ROAM_CYCLE_OPERATOR_MESSAGES` is a fallback only when the new name is unset;
+its value now counts both roles. `ROAM_CYCLE_CONTEXT_MAX_BYTES=32768` caps the entire added
+block in UTF-8 bytes, including framing, privacy instructions and focus. It drops
+the oldest conversation entries first, then the oldest complete group-note entries.
+An assistant entry exceeding 4000 UTF-8 bytes is truncated with `…`, preserving
+character boundaries and including its timestamp, label and ellipsis in that cap.
+Group notes retain their existing `ROAM_GROUP_PAGE_CONTEXT_BYTES` read cap.
+If even privacy framing and the full focus cannot fit, the block is omitted;
+neither is cut mid-instruction. Empty notes, conversation history and focus produce
+no block. Both limits require positive safe integers; invalid values use defaults.
+
+An operator entry newer than the previous cycle attempt triggers participation
+even with no new feed posts. Without either new posts or a new operator entry,
+the cycle skips the model call; assistant replies alone never trigger it.
+The operator check reads separately from the bounded log tail, so assistant replies
+filling the conversation window do not displace the trigger. Attempts use `lastCycleAttemptAt` in the existing
+Moltbook state, recorded at cycle start even for paused or failed attempts;
+pausing still prevents participation model calls. Requests to post are ordinary
+operator instructions, with no special command. The answerer cannot act on the
+platform itself and is instructed to acknowledge that participation instructions
+carry automatically into the next round. Its system prompt states the configured
+`MOLTBOOK_HEARTBEAT_INTERVAL` in hours (default four hours), including when a runtime
+answer prompt is supplied.
+
 Model children started by `src/moltbook/model-call.ts` receive an explicit environment
 allowlist, never the daemon's full environment. Both backends receive only these
 base names when set: `HOME`, `PATH`, `USER`, `LOGNAME`, `SHELL`, `LANG`, `LC_ALL`,
-`LC_CTYPE`, `TMPDIR`, `TERM`, `TZ`, `KLEINBOT_TEMP_DIR`.
+`LC_CTYPE`, `TMPDIR`, `TERM`, `TZ`, `KLEINBOT_TEMP_DIR`, `HTTPS_PROXY`,
+`HTTP_PROXY`, `NO_PROXY`, their lowercase variants, and `NODE_EXTRA_CA_CERTS`.
 Claude additionally receives `CLAUDE_CODE_*` and `ANTHROPIC_*`, including
-`CLAUDE_CODE_OAUTH_TOKEN` and `ANTHROPIC_API_KEY` for authentication. Codex
+`CLAUDE_CODE_OAUTH_TOKEN` and `ANTHROPIC_API_KEY` for authentication, plus
+`CLAUDE_CONFIG_DIR`. Codex
 additionally receives `CODEX_*` (including `CODEX_HOME`) and `OPENAI_API_KEY`.
 `MODEL_CHILD_ENV_ALLOW` optionally adds comma-separated exact names to both.
 Always refused, even in that extension: `MOLTBOOK_API_KEY`, `ROAM_*`, `SIGNAL_*`,
 `ADMIN_*`, `ENTOURAGE_*`, and `CLAUDECODE` (the nested-session marker).
 Claude also refuses `OPENAI_*` and `CODEX_*`; Codex also refuses `CLAUDE_*` and
 `ANTHROPIC_*`. Other names are absent unless explicitly allowed. The chat-side
-spawn in `src/ai.ts` is separate and still inherits its parent's environment.
+spawn in `src/ai.ts` uses the same Claude environment allowlist.
 
 The Claude research-read call runs with cwd set to `data/research` and these
-flags, in addition to `--print --model <model> --no-session-persistence
+flags, in addition to `--print --output-format json --model <model> --no-session-persistence
 --system-prompt <prompt>`:
 
 ```text
@@ -403,7 +586,10 @@ message starts with a command token:
   `ROAM_CONTROL_MAX_DIRECTIVE_CHARS` cap (2000, may be lowered).
 - `/clearfocus` clears that guidance.
 - `/status` reports paused state, focus, corpus post count, classified count,
-  last cycle attempt time and last research run date.
+  last cycle attempt time, last research run date, and per-model usage totals for
+  the last 24 hours and 7 days (see Model usage above), plus the presence snapshot
+  and seven-day changes.
+- `/voice` reads current voice notes; `/resetvoice` archives and clears them.
 
 Each command replies through the research outbox and spends no model call.
 A command token later in a message is not a slash command.
@@ -448,22 +634,24 @@ and never append notes. Each note is a dated, control-stripped, single-line entr
 `ROAM_GROUP_PAGE_CONTEXT_BYTES` (16384) bounds the tail read, which starts at a
 complete, newline-terminated entry with a valid date heading. An entry exactly
 at the byte boundary is retained; malformed entries and an unfinished tail are skipped.
-Both prompts receive these notes as memory data; the answer prompt places them
+The intent and answer prompts receive these notes as memory data; the answer prompt places them
 in its trusted part, before untrusted material, labelled "notes derived from
 operator messages by a separate step". Notes cannot authorize a new
 control change, write-up or note. Unlike chat-side `saveNotes`, this writer does not rewrite and
 trim old entries.
 
-Everything under the wiki directory remains data, never instructions.
-Group notes derive from operator messages; activity entries and generated
+Corpus and generated wiki pages remain data, never instructions.
+Participation receives operator-derived group notes as private guidance; intent
+and answer calls still treat those notes as memory data. Activity entries and generated
 navigation are code-formatted data. Only the clean intent call,
 which has no tools, may request control changes or group-note appends. Calls
 that read hostile material never receive a write tool. Their new page-writing
 power is limited to `pages/`, only through code that validates names and sizes.
 They cannot choose a target for controls, prompts, group notes, activity logs or
 the conversation log. Existing published replies still enter the conversation
-log through code and remain untrusted assistant context; this is not an arbitrary
-model-directed log writer. Existing corpus capture, classifications, summary,
+log through code and cannot independently authorize instructions; participation
+may follow their plans only when operators asked for or approved them. This is not
+an arbitrary model-directed log writer. Existing corpus capture, classifications, summary,
 briefing journal and outbox publication likewise remain data paths.
 
 The wiki root is `<KLEINBOT_RUNTIME_DIR>/research-wiki`, configured through
@@ -495,32 +683,68 @@ becomes `[excerpt withheld]`. Published posts/comments contribute facts only:
 action type, validated platform post link and character count. Their text is
 never copied into activity entries. The log never accepts a model-provided narrative.
 
-Daily research runs `runResearch`, then one `runWriteUp` call, then `writeIndex`.
-The outbox notice includes the page count and still attaches `summary.md` when
-classification produced a result. `RESEARCH_WRITEUP_BACKEND` defaults to `claude`;
-`RESEARCH_WRITEUP_MODEL` has no default: unset skips the call and logs one line.
-`RESEARCH_WRITEUP_TIMEOUT_MS` defaults to 300000. The call requests `tools: "none"`;
+Daily research runs `runResearch`, then `runWriteUp`, then `writeIndex`, and builds
+its outbox digest after those steps. `RESEARCH_WRITEUP_BACKEND` defaults to `claude`;
+`RESEARCH_WRITEUP_MODEL` has no default: unset skips page generation with an activity
+entry and uses code-built digest text. `RESEARCH_WRITEUP_TIMEOUT_MS` (600000) applies
+to each write-up call and the digest call. Both request `tools: "none"`;
 Claude disables tools, while the existing Codex adapter retains read-only tools.
 No backend receives a write tool.
 
-The trusted instructions include the same optional `prompts/research-question.md`
+`RESEARCH_WRITEUP_PAGES_PER_RUN` (4) caps attempted targets, with one model call per page.
+Code chooses `decision-mechanisms`, then `resource-allocation`, then projects with
+at least three records, ranked by records classified since the page file's last
+modification time. Missing pages count all their records as new; project-name order
+breaks ties. Duplicate page slugs get one target. Failed targets consume their slot
+but do not stop later calls. The reply is one JSON object `{name, title, markdown}`;
+its name must match the requested target before the existing page writer validates it.
+Each target logs its name and a fixed reason: `written`, `timeout`, `model-error`,
+`invalid-json`, `wrong-name` (the reply named another page), `too-large` (title or markdown over
+`RESEARCH_PAGE_MAX_BYTES`), or `rejected` (content shape or the secrets check). A failed
+Claude call also logs one `[model] claude error:` line with the CLI's own error subtype and
+message, control-stripped and capped at 200 characters; stderr and model replies are never logged. Failures also emit one console line with the name and
+reason; write-up stderr and reply text are never copied into these diagnostics.
+
+The trusted write-up instructions include the same optional `prompts/research-question.md`
 file as classification, with its existing question cap, and current control focus.
-The untrusted block contains summary text, existing page names/headings, project
-counts and mappings, and at most `RESEARCH_WRITEUP_MAX_RECORDS` (60) classified
-records, organising first and newest first within each group. It includes current
-text from at most `RESEARCH_WRITEUP_MAX_EXISTING_PAGES` mapped project pages
-(default and ceiling 5). `RESEARCH_WRITEUP_CONTEXT_MAX_BYTES` (262144) enforces
-one aggregate byte budget for the entire untrusted block, including summary,
-page inventory, project mappings, records, existing page bodies, JSON encoding
-and framing newlines. Existing page bodies are dropped first, then older records,
-then project mappings and inventory entries; summary text is truncated last.
-Record fields and arrays have individual caps. A per-call random delimiter token
-is stated in the trusted instructions and chosen to be absent from the material.
-Existing page reads are also bounded by the page size allowances plus framing.
-The prompt requests project pages for projects with at least three records,
-`decision-mechanisms`, and `resource-allocation`, with evidence, uncertainties,
-encoded post links and a dated change list. Invalid JSON or a failed call writes
-no research pages and logs a fixed failure status.
+The untrusted block contains only the target's mapping, relevant classified records,
+and that page's existing text when present. The mechanism and allocation pages use
+records with the respective field; project pages use records for that project.
+It includes at most `RESEARCH_WRITEUP_MAX_RECORDS` (60) records per call, organising
+first and newest first within each group. `RESEARCH_WRITEUP_CONTEXT_MAX_BYTES`
+(262144) sets one aggregate byte budget for the encoded block, including framing newlines. Existing page
+text is dropped first, then older records, then mappings and target metadata if
+needed. Individual record fields and arrays retain their caps; page reads are
+bounded by page-size allowances plus framing. `RESEARCH_WRITEUP_MAX_EXISTING_PAGES`
+is a legacy setting with no effect on these single-page calls.
+A per-call random delimiter token is stated in the trusted instructions and chosen
+to be absent from the material. The prompt requests evidence, uncertainties, encoded post links and
+a dated change list. The nightly call no longer receives the full summary.
+
+The nightly digest starts with captured, classified, organising and written-page
+counts, plus the number newly classified in this run, labelled "new since last run".
+`RESEARCH_DIGEST_ITEMS` (5) limits selected Moltbook records from this run's accepted
+classifications, organising first, then highest confidence, with post id breaking ties.
+Code selects one per project, comparing trimmed names without case; missing project
+names share one slot. Historical records and wiki text never enter the digest call.
+One extra call with usage step `digest` uses the write-up backend, model and timeout.
+It receives only ids and the structured project, goal, decisionMechanism,
+resourceAllocation, stakes and quote fields inside a random-delimited untrusted block.
+The reply is JSON `{items:[{id, sentence}]}`: one plain-English sentence under 200
+characters per item, without jargon, explaining what agents are doing and why it
+matters for organising, deciding or allocating resources. Code removes links and
+markdown, drops unknown or duplicate ids and invalid sentences, preserves selection
+order, and appends post links built from the offered ids. If no valid sentences
+survive, the call fails, or the model is unset, each selected item gets a code-built
+`project — decisionMechanism` line (goal when the mechanism is absent) and post link.
+No records means no digest model call.
+
+The final line names pages written this run and says "Ask for the full summary if
+you want it." Whole items are dropped to fit `ROAM_OUTBOX_MAX_TEXT_CHARS` (at most
+4000), preserving the counts and final line when space allows; an exceptionally
+small limit also truncates that framing. `RESEARCH_ATTACH_SUMMARY` (0) leaves the
+nightly notice text-only by default; set it to `1` to attach `summary.md`.
+The full summary is still generated and the answerer can attach it on request.
 
 `RESEARCH_PAGE_MAX_BYTES` (20000) bounds markdown and title independently in UTF-8;
 generated banner, heading and date framing are additional. `sanitisePageMarkdown`

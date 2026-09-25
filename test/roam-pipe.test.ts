@@ -30,7 +30,7 @@ it("routes real daemon live and persisted messages away from the model, includin
     fs.writeFileSync(bin, `#!${process.execPath}
 const fs=require('fs'); const input=fs.readFileSync(0,'utf8');
 fs.appendFileSync(${JSON.stringify(path.join(dir, "calls"))},JSON.stringify(input)+'\\n');
-process.stdout.write('{"shouldRespond":false}');
+process.stdout.write(JSON.stringify({result:'{"shouldRespond":false}'}));
 `, { mode: 0o700 });
     const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
 import assert from 'node:assert/strict'; import fs from 'node:fs'; import path from 'node:path';
