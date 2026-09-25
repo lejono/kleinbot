@@ -228,7 +228,7 @@ resolve_unit_command() {
 # Arguments: bot home, checkout, runtime. Only reads and inspects paths; prints every
 # problem, then fails once.
 check_start_ready() {
-  local home=$1 checkout=$2 runtime=$3 missing=0 claude signal_cli token config_dir
+  local home=$1 checkout=$2 runtime=$3 missing=0 claude signal_cli resolved unit_path dir output token config_dir
   # The bot runs process.env.CLAUDE_BIN || "claude": an empty value means claude.
   claude=$(env_file_setting CLAUDE_BIN "$runtime") || claude=""
   claude=${claude:-claude}
@@ -238,9 +238,17 @@ check_start_ready() {
   fi
   # The wrapper keeps an empty SIGNAL_CLI_BIN and then cannot run it.
   signal_cli=$(env_file_setting SIGNAL_CLI_BIN "$runtime") || signal_cli=$home/.local/bin/signal-cli
-  if ! resolve_unit_command "$signal_cli" "$home" "$checkout" >/dev/null; then
+  if ! resolved=$(resolve_unit_command "$signal_cli" "$home" "$checkout"); then
     echo "not ready: signal-cli '$signal_cli' (SIGNAL_CLI_BIN) is not an executable; run scripts/signal-setup.sh as the bot account" >&2
     missing=1
+  else
+    # The JVM build is a script that needs java on the unit PATH; run it the way the unit would.
+    unit_path=$home/.local/bin
+    for dir in ${READY_SYSTEM_BIN_DIRS-/usr/local/bin /usr/bin /bin}; do unit_path=$unit_path:$dir; done
+    if ! output=$(timeout 60 env PATH="$unit_path" "$resolved" --version 2>&1); then
+      echo "not ready: '$resolved --version' failed on the unit PATH (for the JVM build: is Java 25+ installed?): $(printf '%s' "$output" | tail -1)" >&2
+      missing=1
+    fi
   fi
   if [ ! -x "$checkout/node_modules/.bin/tsx" ]; then
     echo "not ready: $checkout/node_modules/.bin/tsx missing; run npm ci (with dev dependencies) as the bot account" >&2

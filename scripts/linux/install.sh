@@ -160,7 +160,7 @@ Flags: $FLAGS_SIGNAL and $FLAGS_WHATSAPP (group ${FLAGS_GROUP:-$BOT_GROUP})
 Started on this invocation: $START. Enabled services also start at the next boot.
 Next steps (see scripts/linux/README.md):
   1. Clone the checkout at $CHECKOUT as $BOT_USER; run npm ci there.
-  2. As $BOT_USER, run scripts/signal-setup.sh for the native binary.
+  2. Install Java 25+ (openjdk-25-jre-headless); as $BOT_USER, run scripts/signal-setup.sh.
   3. As $BOT_USER, install Claude Code so that claude is in ~/.local/bin, and put a
      token from 'claude setup-token' in daemon.env as CLAUDE_CODE_OAUTH_TOKEN.
   4. Populate $RUNTIME/config/.env and daemon.env, bot-owned and mode 600.

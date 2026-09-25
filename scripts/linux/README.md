@@ -12,7 +12,8 @@ bot account (`sudo -u "$BOT_USER" -H bash`), never as root.
 1. Stage `scripts/linux/` root-owned and run the installer once without
    `--start`. It creates the account, directories and units.
 2. *bot*: clone the repository into `CHECKOUT` and run `npm ci` (with dev dependencies).
-3. *bot*: `bash scripts/signal-setup.sh` for signal-cli (pinned version, checksum checked).
+3. *root*: `apt install openjdk-25-jre-headless`; *bot*: `bash scripts/signal-setup.sh` for
+   signal-cli (JVM build, pinned version, checksum checked).
 4. *bot*: install Claude Code and give it a token (see [Claude Code](#claude-code)).
 5. *bot*: fill `config/daemon.env` and `config/.env` (mode 600) and `prompts/`.
 6. Register a new Signal number, or migrate an existing identity with the old
@@ -34,11 +35,14 @@ bot account (`sudo -u "$BOT_USER" -H bash`), never as root.
 - `npm ci` in the checkout, as the bot account, including dev dependencies:
   the daemons run `CHECKOUT/node_modules/.bin/tsx`, and `tsx` is a dev
   dependency. A missing executable fails startup; nothing is downloaded.
-- Native Linux signal-cli, installed **as the bot account** with
-  `bash scripts/signal-setup.sh` (requires curl and tar). That script downloads
-  an x86_64 build into `~/.local/bin`; other architectures need a compatible
-  native binary via `SIGNAL_CLI_BIN`. Ignore its older user-service setup
-  instructions: use the system units here, with no second signal-cli daemon.
+- Java 25 or newer (`sudo apt install openjdk-25-jre-headless` on Ubuntu 24.04),
+  then signal-cli installed **as the bot account** with
+  `bash scripts/signal-setup.sh` (requires curl and tar). That script installs
+  the JVM build into `~/.local/opt/` and links it as `~/.local/bin/signal-cli`.
+  The native build is avoided (see
+  [Troubleshooting](#troubleshooting-signal-cli-crash-loop-with-stackoverflowerror)).
+  Ignore the script's older user-service setup instructions: use the system
+  units here, with no second signal-cli daemon.
 - Claude Code installed and authenticated for the bot account; see
   [Claude Code](#claude-code). The units look for `claude` on
   `~/.local/bin:/usr/local/bin:/usr/bin:/bin`; no shell profile is loaded.
@@ -255,7 +259,7 @@ contain private message content.
 
 When migrating from another host:
 
-1. Prepare the new checkout, dependencies, Claude Code and native signal-cli,
+1. Prepare the new checkout, dependencies, Claude Code and signal-cli,
    leaving new services stopped. **The new signal-cli must be the same version
    as the old host's or newer** (`signal-cli --version` on both). An older
    signal-cli on data from a newer one fails to decrypt every incoming message
@@ -273,3 +277,31 @@ When migrating from another host:
 4. Re-run the staged installer with the chosen variables and `--start`, then
    inspect the journals. If Baileys auth does not transfer, re-pair WhatsApp
    using the project's QR flow. Keep the old services stopped throughout.
+
+## Troubleshooting: signal-cli crash loop with StackOverflowError
+
+`scripts/signal-setup.sh` installs the JVM build, which avoids this. It applies to
+hosts that still run the native build.
+
+Symptom: after a host reboot, `kleinbot-signal-cli` starts its socket, then dies
+about a second after the bot connects with `Unhandled exception:
+java.lang.StackOverflowError` and exit status 99, restarting every 30 seconds.
+The account data is unchanged. This is a known failure of the native
+(GraalVM) signal-cli build ([AsamK/signal-cli#2113](https://github.com/AsamK/signal-cli/issues/2113));
+0.14.7 and 0.14.8 do not fix it, and a larger Java stack (`-Xss`) does not help.
+
+1. Stop the loop first, so queued messages stay on Signal's server:
+   `sudo systemctl stop kleinbot-signal kleinbot-signal-cli`.
+2. Back up the signal-cli config directory (a private tar, as the bot account).
+3. Switch to the JVM build of the **same** signal-cli version, so the data
+   format does not change: install Java 25 (`sudo apt install
+   openjdk-25-jre-headless`), then run `bash scripts/signal-setup.sh` as the bot
+   account (keep its `VERSION` equal to the one you ran). It replaces
+   `~/.local/bin/signal-cli` with a link to the JVM build. If an env file sets
+   `SIGNAL_CLI_BIN` to the old binary, remove that line. Start both units. The
+   JVM build uses more memory (about 500 MB) than the native one.
+
+`RUST_MIN_STACK=8388608` in `config/.env` is reported upstream to stop the
+crash with the native build, but group sends then hang; use it only if Java is
+not an option. Do not re-link the number or edit signal-cli's database to get
+round this.

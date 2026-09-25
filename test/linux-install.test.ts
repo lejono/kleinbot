@@ -143,6 +143,12 @@ describe("Linux system install", () => {
       assert.match(result.stderr, /signal-cli '.*custom signal-cli'/);
       executable(custom);
       assert.equal(ready().status, 0);
+      // An executable that cannot run (the JVM build without Java) fails, naming the problem.
+      fs.writeFileSync(custom, "#!/bin/sh\necho 'java: not found' >&2\nexit 127\n", { mode: 0o755 });
+      result = ready();
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /--version' failed on the unit PATH.*java: not found/);
+      executable(custom);
 
       const env = (text: string) => fs.writeFileSync(path.join(runtime, "config/.env"), text, { mode: 0o600 });
       // A bare SIGNAL_CLI_BIN is looked up on the unit PATH, as the wrapper's exec does.

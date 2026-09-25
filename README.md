@@ -65,7 +65,7 @@ Signal uses [signal-cli](https://github.com/AsamK/signal-cli) running as a daemo
 bash scripts/signal-setup.sh
 ```
 
-This downloads the native Linux build (GraalVM-compiled, no Java needed) to `~/.local/bin/signal-cli`.
+This downloads the JVM build (pinned version, checksum checked) to `~/.local/opt/` and links it as `~/.local/bin/signal-cli`. It needs Java 25 or newer (`sudo apt install openjdk-25-jre-headless` on Ubuntu 24.04). The native build is not used: it can crash-loop with a StackOverflowError when a client connects ([AsamK/signal-cli#2113](https://github.com/AsamK/signal-cli/issues/2113)).
 
 ### 2. Register a phone number
 
